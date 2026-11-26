@@ -160,6 +160,16 @@ namespace ZX81Compiler
             for (int a = mainStart; a <= mainEnd;)
             {
                 var ins = Z80Disasm.Decode(m, a, null);
+                if (m[a] == 0xEF)
+                {
+                    // RST 28h: the ROM calculator. The bytes after it are operation codes up
+                    // to 34h (end-calc), not instructions: make them one "CALC" step.
+                    var ops = new List<int>();
+                    int q = a + 1;
+                    while (q < mainEnd && m[q] != 0x34) ops.Add(m[q++]);
+                    calcOps[a] = ops;
+                    ins = new Instr { Addr = a, Len = q + 1 - a, Shape = "CALC", Text = "RST 28h (calculator)", Continues = true };
+                }
                 index[a] = code.Count;
                 code.Add(ins);
                 a += ins.Len;
@@ -288,6 +298,35 @@ namespace ZX81Compiler
 
         SV HL, DE, BC, A;
         readonly List<SV> stack = new List<SV>();
+        // The ROM calculator stack, symbolically: each entry is a numeric expression, or a
+        // STR$(...) string made by calculator code 2Ah. calcOps holds the codes of each
+        // RST 28h sequence (by address).
+        readonly List<Expr> fstack = new List<Expr>();
+        readonly Dictionary<int, List<int>> calcOps = new Dictionary<int, List<int>>();
+        Expr FPop()
+        {
+            if (fstack.Count == 0) throw Fail("calculator stack underflow");
+            var v = fstack[fstack.Count - 1]; fstack.RemoveAt(fstack.Count - 1); return v;
+        }
+
+        /// <summary>Apply one RST 28h sequence to the symbolic calculator stack.</summary>
+        void CalcStep(List<int> ops)
+        {
+            foreach (int c in ops)
+            {
+                string op = Runtime.CalcOps.FirstOrDefault(kv => kv.Value == c).Key;
+                if (op == null) throw Fail("unknown calculator code " + Z80Disasm.Hex(c, 2));
+                if (Array.IndexOf(FloatMath.PassOps, op) >= 0)
+                {
+                    Expr r = FPop(), l = FPop();
+                    fstack.Add(new Binary(op, l, r, VT.Num));
+                }
+                else if (op == "NEG" || op == "NOT") fstack.Add(new Unary(op, FPop()));
+                else if (op == "STR$") fstack.Add(new Func("STR$", FPop(), VT.Str));
+                else if (op == "VAL") throw Fail("unexpected calculator VAL");
+                else fstack.Add(new Func(op, FPop(), VT.Num));
+            }
+        }
 
         class Build { public int Addr; public List<Expr> Parts = new List<Expr>(); public List<int[]> Ands = new List<int[]>(); public List<Expr> AndConds = new List<Expr>(); }
         readonly List<Build> builds = new List<Build>();
@@ -346,18 +385,23 @@ namespace ZX81Compiler
 
         int printEnd;
 
-        void PrintItem(PrintItem it, int end)
+        void PrintItem(PrintItem it, int end, bool printer = false)
         {
             FlushFor();
-            if (print == null) { print = new PrintStmt(); printStart = lineStart; }
+            if (print != null && print.Printer != printer) ClosePrint();   // PRINT then LPRINT
+            if (print == null) { print = new PrintStmt { Printer = printer }; printStart = lineStart; }
+            // a floating-point number is printed as its STR$: show just the number
+            var fs = it.A as Func;
+            if (it.Kind == PIKind.Expr && fs != null && fs.Name == "STR$" && FloatMath.IsFloat(fs.Arg)) it.A = fs.Arg;
             print.Items.Add(it);
             printEnd = end;
         }
 
-        void PrintNewline(int end)
+        void PrintNewline(int end, bool printer = false)
         {
             FlushFor();
-            if (print == null) { print = new PrintStmt(); printStart = lineStart; }
+            if (print != null && print.Printer != printer) ClosePrint();
+            if (print == null) { print = new PrintStmt { Printer = printer }; printStart = lineStart; }
             var ps = print; print = null;
             ps.Newline = true;
             Add(ps, printStart);
@@ -566,6 +610,17 @@ namespace ZX81Compiler
                             AddIf(new Binary(op, c.L, c.R, VT.Num), target);
                             return i + 3;
                         }
+                        // floating-point truth test: NOT x, then jump if that is not zero
+                        var notf = HL is SN ? ((SN)HL).E as Unary : null;
+                        bool floatTest = !z && notf != null && notf.Op == "NOT" && FloatMath.IsFloat(notf.A);
+                        if (floatTest && builds.Count > 0)
+                        {
+                            var b = builds[builds.Count - 1];      // A$ AND (floating-point condition)
+                            b.Ands.Add(new[] { b.Parts.Count, target });
+                            b.AndConds.Add(notf.A);
+                            return i + 3;
+                        }
+                        if (floatTest) { AddIf(notf.A, target); return i + 3; }
                         if (z && builds.Count > 0)
                         {
                             // A$ AND n inside a string being built
@@ -654,6 +709,7 @@ namespace ZX81Compiler
                             return next;
                         }
                         if (rt == "rt_goto") { brkPending = false; Emit(new GotoStmt { Target = Num(HL) }, x.Addr + 3); return next; }
+                        if (x.Target == Runtime.ROM_NEW) { Emit(new SimpleStmt("NEW"), x.Addr + 3); return next; }
                         brkPending = false;
                         Emit(new GotoStmt { Target = new AddrRef(x.Target) }, x.Addr + 3);
                         return next;
@@ -667,6 +723,12 @@ namespace ZX81Compiler
                     throw Fail("unexpected CALL C");
                 case "CALL nn":
                     return Call(i);
+                case "CALC":
+                    CalcStep(calcOps[x.Addr]);
+                    return next;
+                case "LD B,n":
+                    if (Is(i + 1, "CALC")) return next;     // comparisons give their code in B too
+                    throw Fail("unexpected LD B,n");
             }
             throw Fail("unrecognised code at " + Z80Disasm.Hex(x.Addr, 4) + ": " + x.Text);
         }
@@ -681,6 +743,15 @@ namespace ZX81Compiler
             {
                 if (x.Target == Runtime.ROM_FAST) { Emit(new SimpleStmt("FAST"), end); return i + 1; }
                 if (x.Target == Runtime.ROM_SLOW) { Emit(new SimpleStmt("SLOW"), end); return i + 1; }
+                if (x.Target == Runtime.ROM_COPY) { Emit(new SimpleStmt("COPY"), end); return i + 1; }
+                if (x.Target == Runtime.ROM_STACK_BC)
+                {
+                    // LD BC,n / CALL STACK-BC: a number 32768..65535 in floating-point code
+                    var k = BC as SK;
+                    if (k == null) throw Fail("STACK-BC without a constant");
+                    fstack.Add(new NumLitU(k.V) { Unsigned = true });
+                    return i + 1;
+                }
                 if (x.Target >= mainStart && x.Target <= mainEnd) { Emit(new GotoStmt { Sub = true, Target = new AddrRef(x.Target) }, end); return i + 1; }
                 throw Fail("CALL to unknown address " + Z80Disasm.Hex(x.Target, 4));
             }
@@ -791,6 +862,39 @@ namespace ZX81Compiler
                 case "rt_randomize": Emit(new RandStmt(), end); break;
                 case "rt_rand": Emit(new RandStmt { N = Unsigned(Num(HL)) }, end); break;
                 case "rt_brk": brkPending = true; break;
+                // ---- floating point ----
+                case "rt_finit": lineStart = end; break;        // start-up code
+                case "rt_fpushi": fstack.Add(Num(HL)); break;
+                case "rt_fplit":
+                    {
+                        var k = HL as SK;
+                        if (k == null) throw Fail("floating-point constant expected");
+                        var b = new byte[5];
+                        Array.Copy(p.Mem, k.V, b, 0, 5);
+                        fstack.Add(b.SequenceEqual(Runtime.PiBytes) ? (Expr)new PiConst() : new FloatLit(b));
+                        break;
+                    }
+                case "rt_frnd": fstack.Add(new RndBare()); break;
+                case "rt_fval": fstack.Add(new Func("VAL", Str(HL), VT.Num)); break;
+                case "rt_fpop": HL = new SN(FPop()); break;
+                case "rt_fstr":
+                    {
+                        var sf = FPop() as Func;
+                        if (sf == null || sf.Name != "STR$") throw Fail("STR$ expected on the calculator stack");
+                        HL = BC = new SR(sf);
+                        break;
+                    }
+                case "rt_freset": break;
+                // ---- printer ----
+                case "rt_lprnum": PrintItem(new PrintItem { Kind = PIKind.Expr, A = Num(HL) }, end, true); break;
+                case "rt_lprstr": PrintItem(new PrintItem { Kind = PIKind.Expr, A = Str(HL) }, end, true); break;
+                case "rt_lat": PrintItem(new PrintItem { Kind = PIKind.At, A = Num(HL), B = Num(DE) }, end, true); break;
+                case "rt_ltab": PrintItem(new PrintItem { Kind = PIKind.Tab, A = Num(HL) }, end, true); break;
+                case "rt_lcomma": PrintItem(new PrintItem { Kind = PIKind.Comma }, end, true); break;
+                case "rt_lnewline": PrintNewline(end, true); break;
+                // ---- tape ----
+                case "rt_save": Emit(new TapeStmt { Name = Str(HL) }, end); break;
+                case "rt_load": Emit(new TapeStmt { Name = Str(HL), Load = true }, end); break;
                 case "rt_goto":
                     Emit(new GotoStmt { Sub = true, Target = Num(HL) }, end); break;
                 case "rt_next":
@@ -967,11 +1071,12 @@ namespace ZX81Compiler
             if (s is IfStmt) { var f = (IfStmt)s; return new IfStmt { Cond = Fix(f.Cond), Then = FixStmt(f.Then) }; }
             if (s is PrintStmt)
             {
-                var p0 = (PrintStmt)s; var n = new PrintStmt { Newline = p0.Newline };
+                var p0 = (PrintStmt)s; var n = new PrintStmt { Newline = p0.Newline, Printer = p0.Printer };
                 foreach (var it in p0.Items) n.Items.Add(new PrintItem { Kind = it.Kind, A = Fix(it.A), B = Fix(it.B) });
                 return n;
             }
             if (s is GotoStmt) { var g = (GotoStmt)s; return new GotoStmt { Sub = g.Sub, Target = Fix(g.Target) }; }
+            if (s is TapeStmt) { var t = (TapeStmt)s; return new TapeStmt { Name = Fix(t.Name), Load = t.Load }; }
             if (s is ForStmt) { var f = (ForStmt)s; return new ForStmt { Var = NumName(f.Line)[0], From = Fix(f.From), To = Fix(f.To), Step = Fix(f.Step) }; }
             if (s is NextStmt) return new NextStmt { Var = NumName(((NextStmt)s).Line)[0] };
             if (s is DimStmt)

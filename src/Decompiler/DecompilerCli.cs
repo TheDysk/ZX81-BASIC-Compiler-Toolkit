@@ -18,6 +18,17 @@ using System.IO;
 using System.Linq;
 using System.Text;
 
+using System.Reflection;
+
+// Version and description stored in the .exe (Windows: Properties > Details). Keep the
+// version in step with Versions.cs.
+[assembly: AssemblyTitle("ZX81 Decompiler (command line)")]
+[assembly: AssemblyDescription("Turns ZX81 .p files back into BASIC listings and Z80 assembly")]
+[assembly: AssemblyProduct("ZX81 BASIC Toolset")]
+[assembly: AssemblyCopyright("Copyright (c) Simon Round 2026")]
+[assembly: AssemblyVersion("1.00.0.0")]
+[assembly: AssemblyFileVersion("1.00.0.0")]
+
 namespace ZX81Compiler
 {
     public static class DecompilerCli
@@ -39,6 +50,7 @@ namespace ZX81Compiler
                         case "--p-from": pFrom = args[++i].ToLowerInvariant(); break;
                         case "--report": report = true; break;
                         case "-h": case "--help": case "/?": Usage(); return 0;
+                        case "--version": Console.WriteLine("zx81dc - ZX81 Decompiler " + Versions.Show(Versions.Decompiler)); return 0;
                         default:
                             if (input != null) { Console.WriteLine("Unexpected argument: " + args[i]); return 2; }
                             input = args[i]; break;
@@ -90,6 +102,7 @@ namespace ZX81Compiler
 
         static void Usage()
         {
+            Console.WriteLine("zx81dc - ZX81 Decompiler " + Versions.Show(Versions.Decompiler));
             Console.WriteLine("Usage: zx81dc program.p [--txt file] [--basic file] [--asm file] [--p file] [--p-from listing|basic] [--report]");
             Console.WriteLine("  Writes the BASIC listing (.txt), rebuilt BASIC for compiled programs (.bas),");
             Console.WriteLine("  machine code (.asm), and optionally a new .p file made from the text.");

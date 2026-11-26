@@ -86,12 +86,12 @@ namespace ZX81Compiler
                 // first assembly with a provisional variables address, to find the code size
                 gen.Asm.Define("BSS", 0x6000);
                 code = gen.Asm.Assemble(CodeStart, false);
-                int vars = VarsAddress(code.Length);
+                int vars = VarsAddress(code.Length, gen.UsesCalc);
                 // second assembly with the real address
                 gen.Asm.Symbols.Clear();
                 gen.Asm.Define("BSS", vars);
                 code = gen.Asm.Assemble(CodeStart, opt.MakeListing);
-                if (VarsAddress(code.Length) != vars) throw new AsmException("internal: code size changed");
+                if (VarsAddress(code.Length, gen.UsesCalc) != vars) throw new AsmException("internal: code size changed");
                 res.VarsAddress = vars;
                 res.VarsSize = gen.BssSize;
                 res.CodeSize = code.Length;
@@ -130,12 +130,17 @@ namespace ZX81Compiler
 
         /// <summary>Where the variables will go, for a given code size. Must match the
         /// layout BuildPFile produces.</summary>
-        static int VarsAddress(int codeLength)
+        /// <summary>Extra room left after E_LINE when the program uses the ROM calculator
+        /// (floating point, VAL, SAVE/LOAD): the calculator stack and the ROM's workspace
+        /// (text made by STR$, the copy VAL makes of its string) grow up from there.</summary>
+        public const int CalcReserve = 768;
+
+        static int VarsAddress(int codeLength, bool usesCalc)
         {
             int dfile = ProgStart + (4 + 1 + codeLength + 1) + Line10().Length;   // line 0 = header + REM + code + 76h
             int varsArea = dfile + 793;   // display file: 76h + 24 x (32 + 76h)
             int eLine = varsArea + 1;     // VARS area is just the 80h end marker
-            return eLine + 256;  // leave room for the edit line and calculator stack
+            return eLine + 256 + (usesCalc ? CalcReserve : 0);  // leave room for the edit line and calculator stack
         }
 
         /// <summary>Split the text into numbered lines and parse each one. Lines are

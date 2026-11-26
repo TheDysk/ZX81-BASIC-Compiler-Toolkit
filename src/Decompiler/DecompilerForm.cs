@@ -18,6 +18,17 @@ using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 
+using System.Reflection;
+
+// Version and description stored in the .exe (Windows: Properties > Details). Keep the
+// version in step with Versions.cs.
+[assembly: AssemblyTitle("ZX81 Decompiler")]
+[assembly: AssemblyDescription("Turns ZX81 .p files back into BASIC listings and Z80 assembly")]
+[assembly: AssemblyProduct("ZX81 BASIC Toolset")]
+[assembly: AssemblyCopyright("Copyright (c) Simon Round 2026")]
+[assembly: AssemblyVersion("1.00.0.0")]
+[assembly: AssemblyFileVersion("1.00.0.0")]
+
 namespace ZX81Compiler
 {
     public static class DecompilerProgram
@@ -45,7 +56,7 @@ namespace ZX81Compiler
 
         public DecompilerForm()
         {
-            Text = "ZX81 Decompiler";
+            Text = "ZX81 Decompiler " + Versions.Show(Versions.Decompiler);
             Width = 1050; Height = 740;
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 9f);
@@ -62,7 +73,7 @@ namespace ZX81Compiler
             var help = new ToolStripMenuItem("&Help");
             help.DropDownItems.Add(new ToolStripMenuItem("&How it works...", null, (s, e) => MessageBox.Show(this, HelpText, "ZX81 Decompiler")));
             help.DropDownItems.Add(new ToolStripMenuItem("&About", null, (s, e) => MessageBox.Show(this,
-                "ZX81 Decompiler\n\nTurns a .p file back into a BASIC listing, finds and disassembles machine code, and rebuilds the BASIC of programs made by the ZX81 BASIC Compiler." + UiCommon.AboutText, "About")));
+                "ZX81 Decompiler " + Versions.Show(Versions.Decompiler) + "\n\nTurns a .p file back into a BASIC listing, finds and disassembles machine code, and rebuilds the BASIC of programs made by the ZX81 BASIC Compiler." + UiCommon.AboutText, "About")));
             menu.Items.Add(file); menu.Items.Add(help);
 
             var tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
@@ -122,7 +133,7 @@ namespace ZX81Compiler
                 basic.Text = UiCommon.Crlf(result.Basic ?? "# This program wasn't made by the ZX81 BASIC Compiler, so there is no BASIC to rebuild from machine code.\n# The Listing tab has the BASIC as stored, with any machine code kept as \\hh escapes.");
                 asm.Text = UiCommon.Crlf(result.Asm ?? "; No machine code found.");
                 report.Text = UiCommon.Crlf(result.Report);
-                Text = "ZX81 Decompiler - " + Path.GetFileName(file);
+                Text = "ZX81 Decompiler " + Versions.Show(Versions.Decompiler) + " - " + Path.GetFileName(file);
                 tabs.SelectedTab = result.Basic != null ? pageBasic : pageListing;
                 status.Text = Path.GetFileName(file) + ": " + p.Lines.Count + " lines; " + p.AutoRunDescription() +
                     (result.Recovered.Success ? (result.Recovered.Verified ? "; BASIC rebuilt and verified" : "; BASIC rebuilt") : "");
@@ -196,14 +207,19 @@ Only for programs made by the ZX81 BASIC Compiler. The decompiler reads the
 compiled machine code back into BASIC statements. Variable names aren't stored in
 machine code, so variables are renamed A, B, C ... If the report says 'Verified',
 compiling the rebuilt BASIC gives exactly the same machine code.
+Everything the compiler supports is recognised, including floating point (SIN, PI,
+0.5 ...), LPRINT, COPY, SAVE, LOAD and NEW. Lines that compile to nothing (REM,
+LIST, LLIST, CONT) can only come back as REM, and only when the program had a
+line table (computed GOTO / GOSUB); otherwise lines are renumbered 10, 20, 30 ...
 Ordinary machine code (written by hand or by other tools) can't be turned back
 into BASIC - it is shown in the Machine code tab instead.
 
 MACHINE CODE (.ASM)
 Machine code found by following every USR in the program: in REM lines, split
 across several lines, in the variables area or after the display file. Known ROM
-routines and system variables are shown by name. The listing can be assembled
-again (e.g. with pasmo) to give the same bytes.
+routines and system variables are shown by name, and the bytes after RST 28h
+(the ROM calculator) and RST 08h (error reports) are explained. The listing can
+be assembled again (e.g. with pasmo) to give the same bytes.
 
 MAKE .P
 Turns the Listing or BASIC tab (with your edits) into a .p file for an emulator.";

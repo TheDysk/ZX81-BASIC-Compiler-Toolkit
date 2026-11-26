@@ -65,6 +65,36 @@ namespace ZX81Compiler
             return true;
         }
 
+        /// <summary>The shortest number text that turns back into exactly these 5 bytes
+        /// (used when writing BASIC rebuilt from compiled code). E.g. 0.1, 3.5, 1E+20.</summary>
+        public static string ShortText(byte[] b)
+        {
+            double v = Decode(b, 0);
+            for (int digits = 1; digits <= 17; digits++)
+            {
+                string t = v.ToString("G" + digits, CultureInfo.InvariantCulture);
+                double back;
+                if (!double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out back)) continue;
+                byte[] e = Encode(back);
+                bool same = true;
+                for (int i = 0; i < 5; i++) if (e[i] != b[i]) same = false;
+                if (same) return ZxStyle(t);
+            }
+            return v.ToString("R", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>1E+10 -> 1E10, 1E-05 -> 1E-5 (as the ZX81 writes exponents).</summary>
+        static string ZxStyle(string t)
+        {
+            int e = t.IndexOf('E');
+            if (e < 0) return t;
+            string mant = t.Substring(0, e), exp = t.Substring(e + 1);
+            bool neg = exp.StartsWith("-");
+            exp = exp.TrimStart(new[] { '+', '-' }).TrimStart(new[] { '0' });
+            if (exp.Length == 0) exp = "0";
+            return mant + "E" + (neg ? "-" : "") + exp;
+        }
+
         /// <summary>Number as short readable text (whole numbers without a decimal point).</summary>
         public static string Format(double v)
         {

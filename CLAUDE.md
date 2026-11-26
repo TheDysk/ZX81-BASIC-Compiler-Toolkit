@@ -8,6 +8,8 @@ Guidance for working on this repository: a toolset for Sinclair ZX81 `.p` files.
 
 All five programs share `src/Core`. The three GUIs also share `src/UI`.
 
+**Versions:** every tool is V1.00. The numbers live in `src/Core/Versions.cs` (shown in titles, About boxes and `--version`) and in the `[assembly: AssemblyVersion]` lines at the top of `src/Compiler/Cli.cs`, `src/Decompiler/DecompilerCli.cs`, `src/Decompiler/DecompilerForm.cs` and `src/Browser/BrowserForm.cs` (stored in the .exe). Change both together when releasing a tool.
+
 ## Build and test
 
 ```sh
@@ -17,10 +19,10 @@ tests/run_tests.sh         # rebuild + compiler tests + decompiler round trips +
 tests/run_tests.sh DIR     # ... and round-trip every .p file found under DIR
 ```
 
-Test tooling needs `python3` and `pip install z80` (a Z80 emulator with a disassembler).
+Test tooling needs `python3` and `pip install z80` (a Z80 emulator with a disassembler). Floating point, VAL, LPRINT and tape need the real ZX81 ROM in the tests: put the 8K `zx81.rom` in `tests/zx81.rom` (git-ignored, it is copyright: don't commit it) or set `ZX81_ROM`.
 
 - `mono build/zx81c.exe in.bas out.p --asm out.asm` compiles from the command line. The `.asm` file is the full assembly listing with addresses, bytes and the symbol table. Read it first when debugging generated code.
-- `python3 tests/run81.py out.p [--frames N] [--keys "frame:KEY,..."] [--break FRAME] [--snap f1,f2]` runs the program and prints the 32x24 screen as text. Keys are ZX81 characters plus `NL`, `RUB`, `MINUS` and `SPACE`; each press lasts 5 frames. The last line reports whether the program finished, whether the ROM area was written to, whether the display file is still intact, and the final SP (it should be back at 7FF0).
+- `python3 tests/run81.py out.p [--frames N] [--keys "frame:KEY,..."] [--break FRAME] [--snap f1,f2] [--rom file | --stub] [--expect file]` runs the program and prints the 32x24 screen as text, then any printer output (`printer:`) and events (`event: report A`, `SAVE "NAME"`, `LOAD ""`, `NEW`). Keys are ZX81 characters plus `NL`, `RUB`, `MINUS` and `SPACE`; each press lasts 5 frames. The last line reports whether the program finished, whether the ROM area was written to, whether the display file is still intact, and the final SP (7FF0 after a normal end). `--expect tests/expected/tN.txt` compares everything with a saved run; make a new one with `run81.py tN.p | sed '$d' > tests/expected/tN.txt` *after* checking the output by eye.
 - `python3 tests/asmcheck.py out.asm out.p` disassembles every instruction and compares it with the source line. It must report 0 mismatches after any change to `Z80Asm.cs` or to runtime/codegen instruction forms.
 
 - `mono build/zx81dc.exe prog.p --report --txt out.txt --asm out.asm --p back.p` decompiles. `cmp prog.p back.p` should show no difference.
@@ -29,7 +31,7 @@ Test tooling needs `python3` and `pip install z80` (a Z80 emulator with a disass
 - GUIs can be smoke-tested on Linux with `xvfb-run mono build/ZX81PBrowser.exe file.p` plus `xdotool`/ImageMagick `import` for screenshots. Mono's WinForms isn't Windows, so layouts should still be checked on Windows.
 - Known: one sample file (`frogging-normalized…p`) doesn't round-trip because its VARS pointer is outside the file. Damaged files like that are reported, not fixed.
 
-**Emulator caveat:** `run81.py` uses a stub ROM, not the real ZX81 ROM. KEYBOARD (02BB), DECODE (07BD), FAST (0F23) and SLOW (0F2B) are faked, FRAMES is decremented every 16000 T-states, and the program is entered directly at 16514. These things are therefore *not* verified: `.p` loading/autorun, real ROM routines, and timing. Confirm real behaviour in EightyOne or on hardware.
+**Emulator caveats:** `run81.py` runs the real ROM when it can find one (otherwise a small stub, `--stub`), but always fakes KEYBOARD (02BB), DECODE (07BD), FAST (0F23) and SLOW (0F2B), removes the HALT in SET-FAST (no display interrupts are emulated), decrements FRAMES every 16000 T-states and enters the program directly at 16514. With the real ROM it also stops at breakpoints instead of running: RST 08h errors (reported), COPY-BUFF and COPY (the printer line / screen is recorded, then it returns), SAVE at 02FBh (name recorded, returns), LOAD at 0343h and NEW (reported, run ends). The ROM's skip-constants routine writes 5 bytes at address 0 on purpose (DE = 0); real hardware ignores ROM writes, so the harness puts them back. *Not* verified here: `.p` loading/autorun, the display, real printer and tape signals, and timing. Confirm those in EightyOne or on hardware. (A real SAVE was checked once by letting the ROM run and decoding the bits it chose to send: name and program bytes were correct and it came back to the program.)
 
 ## Code language constraints
 
@@ -64,8 +66,9 @@ Each exe has its own `Main`, selected with `-main:` in `build.sh`/`build.bat`. I
 
 | File | Role |
 |---|---|
-| `Parser.cs` | `Lexer` (keywords, `GO TO`, strings and their escapes) and recursive-descent `Parser` producing the AST, plus constant folding. Also has the `Diagnostic` and `CompileError` types. |
-| `Ast.cs` | Expression and statement node classes. Every expression has a static type `VT.Num` or `VT.Str`, checked in the parser. |
+| `Parser.cs` | `Lexer` (keywords, `GO TO`, strings and their escapes) and recursive-descent `Parser` producing the AST, plus constant folding (`Fold(e, inFloat)`: whole-number folding outside float islands, double inside; `INT` of a whole constant folds away because whole-number INT makes no code). Also has the `Diagnostic` and `CompileError` types. |
+| `Ast.cs` | Expression and statement node classes. Every expression has a static type `VT.Num` or `VT.Str`, checked in the parser. Also `FloatMath`: the rules for which expressions are floating point. |
+| `Versions.cs` | The version number of each tool. |
 | `CodeGen.cs` | AST to Z80 assembly *text* through `Z80Asm`. It holds the variable tables, string temp buffers, literal pool and the line table. |
 | `Runtime.cs` | The runtime library as named assembly chunks with dependencies. Only the chunks that are used get emitted. |
 | `Z80Asm.cs` | Two-pass assembler for the Z80 subset we use: labels, `EQU`, `DB/DW/DS`, expressions with `+ - * /`, `$`, hex as `0FFh`/`$FF`/`0xFF`. |
@@ -90,6 +93,7 @@ E_LINE+256  "BSS": all variables, created at run time, NOT stored in the .p
 - BSS begins with fixed runtime state (`Runtime.BssEquates`, `BSS_FIXED = 52` bytes: print row/col, RNG seed, scratch, the 32-byte INPUT buffer). User variables come after `VARSTART`. CLEAR zeroes from `VARSTART`; `rt_init` zeroes everything.
 - `ENTRYSP` (a `DW` inside the code) stores the SP at entry. `rt_stop` restores it and returns to BASIC, so STOP works from inside GOSUBs. RUN reloads SP from it.
 - `rt_memcheck` refuses to run, showing "OUT OF MEMORY", if the stack is within 160 bytes of `BSS_END`. The compile-time limit is `0x8000 - 0x200` (16K machine).
+- **Calculator room:** if `CodeGen.UsesCalc` (any float, VAL, SAVE or LOAD), BSS starts `Compiler.CalcReserve` (768) bytes later, because the ROM's calculator stack and workspace grow up from E_LINE. Those programs also `CALL rt_finit` straight after rt_init; it records STKBOT/STKEND/depth in DW slots inside its own chunk (not in BSS, so BSS_FIXED is unchanged).
 
 ## Code generation conventions
 
@@ -110,10 +114,13 @@ E_LINE+256  "BSS": all variables, created at run time, NOT stored in the .p
   - Computed GOTO/GOSUB/RUN emit `LINETAB` and use `rt_goto`.
   - FOR finds its NEXT *lexically*, like the ROM: the first `NEXT v` after it, including one inside an IF.
 - Fresh labels come from `NewLabel()` (`_kN`). Runtime labels must be globally unique because all chunks share one namespace.
+- **Floating point** (`GenFloat`, `Calc`): values go on the ROM calculator stack: `LD HL,n / CALL rt_fpushi` (signed whole number), `LD BC,n / CALL 1520h` (STACK-BC, for Unsigned constants), `LD HL,LIT_n / CALL rt_fplit` (5-byte constant from the literal pool, also PI). Each operation is its own `RST 28h / DB op,34h` (codes in `Runtime.CalcOps`); comparisons also need `LD B,op` first, because the ROM's comparison routine reads B. The result goes to HL with `CALL rt_fpop`, or to text with `RST 28h / DB 2Ah,34h / CALL rt_fstr / LD DE,T_t / CALL rt_append / CALL rt_freset`. Don't merge several operations into one RST 28h block: Recover expects one per block, and comparisons need B at entry.
 
 ## Runtime rules (Runtime.cs)
 
-- **Never use IX, IY, or the alternate registers (`EX AF,AF'`, `EXX`).** The ROM's SLOW-mode display interrupt depends on them.
+- **Never use IX, IY, or the alternate registers (`EX AF,AF'`, `EXX`)** in our own code. The ROM's SLOW-mode display interrupt depends on them. (The ROM's calculator uses EXX itself; that's fine, the ROM does that in SLOW mode all the time.)
+- **ROM calculator invariants:** `rt_freset` must run after every island's result is used (rt_fpop and the STR$ path do it). It only tidies up when the calculator stack is back to its depth at start-up, so nested islands (`SIN X+PEEK (SIN Y*100)`) are safe; the ROM's workspace (STR$ text, VAL's copy of its string, SAVE/LOAD names) is reclaimed then. `rt_fplit` doesn't check for room: the CalcReserve gap is the room.
+- The ROM's own errors (`SQR -1`, `LN 0`, overflow) and our `rt_fpop` overflow (report B) go through RST 08h, which unwinds to BASIC and shows the report. That's intended: it is what the ZX81 does.
 - The screen is written directly into the display file at `(D_FILE)`. It assumes the fully expanded 16K layout, so a collapsed (1K) display file is not supported. Only codes with bit 6 clear may be stored there. `rt_prchr` turns anything else into `?`, and `76h` means newline. Writing a raw `76h` into a screen line would break the display.
 - Rows 0–21 are for PRINT and rows 22–23 for INPUT. Scrolling is deferred: a newline on row 21 moves to "row 22 pending", and the next printed character scrolls. That keeps the ZX81 `SCROLL` then `PRINT` idiom working.
 - Keyboard input goes through the ROM: `CALL 02BBh` (KEYBOARD), and if `L <> FFh`, `CALL 07BDh` (DECODE), which returns carry set and HL pointing at the key code. NEWLINE is `76h`; RUBOUT is `77h`.
@@ -126,25 +133,35 @@ E_LINE+256  "BSS": all variables, created at run time, NOT stored in the .p
 
 ## Language decisions (keep these consistent; document changes in `MainForm.HelpText` and README.md)
 
-- **Arithmetic:** integer only. Division truncates toward zero. Values wrap at 16 bits. Floating-point functions (SIN, COS, TAN, ASN, ACS, ATN, LN, EXP and PI) are compile errors.
-- **RND:** only valid as `RND*n` or `n*RND`. It is rewritten to `RndN` in `ParseMul` and gives 0..n-1. A bare RND is an error.
+- **Arithmetic:** whole numbers (16-bit, wrap around) except in float islands. Division truncates toward zero; integer `**` with a negative power gives 0.
+- **Float islands** (`FloatMath` in Ast.cs is the single source of truth):
+  - An expression is floating point if it contains a FloatLit, PI, bare RND, or SIN COS TAN ASN ACS ATN LN EXP SQR VAL (`FloatFuncs`). ABS SGN INT (`PassFuncs`), the arithmetic and comparison operators, AND/OR (`PassOps`), NEG/NOT and `RND*n` are floating point when a child is.
+  - Inside an island *every* arithmetic part is floating point, including all-whole-number parts (`SIN (7/2)` is SIN 3.5): GenFloat recurses top-down. Only nodes that aren't arithmetic (variables, PEEK, CODE, LEN, USR, string compares, array elements) are worked out as whole numbers and stacked with `rt_fpushi`.
+  - Constants: whole numbers -32768..65535 are NumLit (`Unsigned` for 32768+); anything else, and any number *written with a decimal point*, is FloatLit. `FloatMath.Const` normalises folded results the same way.
+  - Where a whole number is needed, the value is rounded like the ROM's FP-TO-BC (nearest, halves away from zero; over 65535 gives report B). `CodeGen.NormStmt/Norm` turns FloatLit constants in whole-number places into NumLit first, with a warning if rounded, so `34.0` and `34` give identical code. `WarnIfRounded` warns when a non-constant float is stored in a variable or a FOR loop (`LET A=H*PI/6`).
+  - PRINT/LPRINT of a float = PRINT STR$ (the ROM's own number format). IF and `A$ AND n` test floats for "not zero" with calculator NOT (0.3 is true).
+  - VAL always uses the ROM (any expression; it can't see compiled variables). INPUT still uses `rt_val` (whole numbers).
+- **RND:** `RND*n`/`n*RND` becomes `RndN` in `ParseMul` (fast whole number 0..n-1). A bare RND is a float (rt_rnd16 / 65536); inside an island, RndN is RND*n in floating point.
+- **SQR** is always floating point (so `SQR 2` is 1.4142136). `rt_sqr` (integer square root) is kept in Runtime.cs only so older compiled programs still decompile.
 - **AND/OR** follow ZX81 semantics: `a AND b` gives a if b≠0, otherwise 0. `a OR b` gives 1 if b≠0, otherwise a. Comparisons give 1/0. NOT binds more loosely than the comparisons.
 - **Function arguments:** functions take a *primary* argument, as in Sinclair BASIC, so `PEEK 16396+256*PEEK 16397` works.
 - **Listing escapes** (`Lexer.ReadString`): `\hh` hex code, `\` + 2 of `' .:` for block graphics, `%c` inverse, `""` quote, Unicode block characters. Codes ≥ C0h inside strings are expanded to keyword text.
 - **One statement per line.** `:` gives a helpful error.
-- **Ignored statements:** LIST, LLIST, LPRINT, COPY, SAVE, LOAD and CONT are dropped with a warning. NEW becomes STOP.
+- **LPRINT** (`PrintStmt.Printer`) uses the rt_l… printer routines (ROM LPRINT-CH 0851h: printer column = (PR_CC & 7Fh) - 3Ch; LPRINT AT only sets the column, as on the ZX81). **COPY** = `CALL 0869h`. **NEW** = `JP 03C3h`.
+- **SAVE/LOAD** (`TapeStmt`): `rt_tname` copies the name into the ROM workspace (BC-SPACES) with the last character inverse and calls SET-FAST; SAVE then calls 02FBh (just after the ROM's NAME, which would parse BASIC text) and returns; LOAD resets SP to ENTRYSP and jumps to 0343h with carry set for `LOAD ""`, so when the ROM's LOAD returns it lands in the ROM's USR handler and BASIC carries on with the loaded program.
+- **LIST, LLIST, CONT:** accepted, do nothing, warning (no BASIC to list / nothing to continue).
 
 ## Decompiler and browser internals (src/Core)
 
 | File | Role |
 |---|---|
 | `PFile.cs` | Loads a `.p` into a 64K image `Mem` with byte 0 at 4009h, so all code uses real addresses. Decodes lines (`PLine`), the `Sysvars` table with plain-English meanings (`SysvarNote`), autorun (`NXTLIN`), the display file (`DisplayInfo`: expanded/collapsed, `Chars[24,32]`), saved variables (`ReadVariables` → `PVar`), the memory map (`Region`, `RamEstimate`). Damaged files load with `Problems` filled in rather than throwing. |
-| `ZxFloat.cs` | ZX81 5-byte floats: `Decode`, `Encode`, `Matches` (does the hidden number equal the digits shown?). |
+| `ZxFloat.cs` | ZX81 5-byte floats: `Decode`, `Encode`, `Matches` (does the hidden number equal the digits shown?), `ShortText` (shortest text giving the same 5 bytes, ZX81-style exponent `1E-5`). |
 | `Basic81.cs` | Detokeniser (`Detokenize`, `ProgramText`) in two styles, `Exact` (reloadable) and `Display` (Unicode graphics, inverse ranges, optional `{=value}`); tokeniser (`TokenizeBody`, `TokenizeProgram`); `BuildP` (new `.p` from lines, copying a template's sysvars/display/vars and shifting pointers). |
-| `Z80Disasm.cs` | Full Z80 decoder (CB/ED/DD/FD/DDCB) using the x/y/z/p/q decomposition. `RomLabels`, `SysvarLabels`. Immediates below 4000h are shown as hex, not labels (`Addr16(v, immediate)`), because `LD BC,0` isn't `LD BC,START`. |
+| `Z80Disasm.cs` | Full Z80 decoder (CB/ED/DD/FD/DDCB) using the x/y/z/p/q decomposition. `RomLabels` (incl. the calculator, printer and tape entry points), `SysvarLabels`, `CalcName`/`CalcComment` (names of calculator codes after RST 28h, report after RST 08h). Immediates below 4000h are shown as hex, not labels (`Addr16(v, immediate)`), because `LD BC,0` isn't `LD BC,START`. |
 | `CodeFinder.cs` | Finds machine code: evaluates every `USR` argument (`Eval`: hidden floats, `PEEK` of saved memory, saved variables, `VAL "..."`, `+ - * /`), traces from each entry following jumps/calls, handles `RST 28h` calculator literals and the byte after `RST 08h`. `ToAsm` writes ORG blocks, EQUs for used ROM/sysvar labels, `Lxxxx:` labels and `DB` for data; output must reassemble identically. |
 | `Recover.cs` | Rebuilds BASIC from code made by our compiler; see below. |
-| `BasicWriter.cs` | Prints recovered AST expressions/statements as BASIC text with correct precedence (OR 2, AND 3, NOT 4, comparisons 5, + - 6, * / 8, unary minus 9, ** 10). `RndN` prints as `INT (RND*n)`. |
+| `BasicWriter.cs` | Prints recovered AST expressions/statements as BASIC text with correct precedence (OR 2, AND 3, NOT 4, comparisons 5, + - 6, * / 8, unary minus 9, ** 10). `RndN` prints as `INT (RND*n)`. A FloatLit prints as its `ShortText`, but a whole value in -32768..65535 *must* print as `720.0` (not `720` or `7.2E2`), or it would be read back as a whole-number constant and compile differently. |
 | `Decompiler.cs` | `Decompiler.Run(p, name)` → `DecompileResult` (Listing, Basic, Asm, Report, `MakeP(text, …)`). Shared by the CLI and GUI. |
 | `Tape.cs` | `.wav` (44.1 kHz 16-bit; bit 0 = 4 pulses, bit 1 = 9 pulses, 150 µs high/150 µs low, 1300 µs gap) and `.tzx` (block 30h text, 20h pause, 19h generalised data with the same pulse symbols). Tape data is the program name in ZX81 codes, last char ORed with 80h, then the `.p` bytes. |
 
@@ -164,6 +181,10 @@ E_LINE+256  "BSS": all variables, created at run time, NOT stored in the .p
 5. **Name** variables (A, B, … ; strings A$ …) and **number** lines: real numbers from `LINETAB` if present (REM-only lines restored as `REM`), else 10, 20, 30 ….
 6. **Verify** by recompiling the rebuilt listing with the detected options and comparing the code. Only report "verified" when identical.
 
+Floating point in Recover: when decoding the compiled lines, each `RST 28h … 34h` becomes one pseudo-instruction (Shape `"CALC"`, codes in `calcOps`), because the code bytes would otherwise be misread as instructions (21h = LD HL,nn). `fstack` is a symbolic calculator stack: rt_fpushi/rt_fplit/STACK-BC/rt_frnd/rt_fval push, CALC applies operations, rt_fpop/rt_fstr pop. `LD B,n` before a CALC is skipped; the float truth test (`NOT x` then `JP NZ`) becomes `IF x` (or `A$ AND x` inside a string build); `PRINT STR$ float` is shown as `PRINT float`.
+
+Fuzzing is the best check after changing CodeGen or Recover: generate random programs full of float expressions, compile, decompile, and require "Verified" for all of them (a generator like this found several real mismatches, e.g. `34.0` vs `34`).
+
 **Coupling rule:** `Recover.cs` reads the exact instruction patterns that `CodeGen.cs` writes. If you change code generation, run `tests/run_tests.sh`: the decompiler section must still say "BASIC rebuilt+verified" for every test program. If it doesn't, update the matching pattern handler in `Recover.cs`.
 
 ### Browser notes
@@ -176,9 +197,9 @@ E_LINE+256  "BSS": all variables, created at run time, NOT stored in the .p
 
 1. Add or extend a test listing in `tests/` that exercises the feature, with output you can check on the text screen.
 2. Make the change, run `tests/run_tests.sh`, then look at the screen with `python3 tests/run81.py tests/tN.p`.
-3. `asmcheck.py` must show 0 mismatches, and `run81.py` must show `rom ok`, `display ok` and SP 7FF0.
+3. `asmcheck.py` must show 0 mismatches, and `run81.py` must show `rom ok`, `display ok` and SP 7FF0 (or the expected ZX81 report), and `matches expected` for the programs in `tests/expected`.
 4. Check it still compiles as C# 5 (`build.bat` / `mcs -langversion:5`).
-5. Update `MainForm.HelpText` (compiler), `DecompilerForm.HelpText` (decompiler) and README.md if user-visible behaviour changed.
+5. Update `MainForm.HelpText` (compiler), `DecompilerForm.HelpText` (decompiler) and README.md if user-visible behaviour changed, and bump the version (see Versions above) for a release.
 6. If the change touches `CodeGen.cs` or `Runtime.cs`, the decompiler's recovery must still verify (see the coupling rule above).
 
 ## Privacy

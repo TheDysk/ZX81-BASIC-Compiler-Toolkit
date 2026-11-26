@@ -23,6 +23,17 @@ using System.Linq;
 using System.Text;
 using System.Windows.Forms;
 
+using System.Reflection;
+
+// Version and description stored in the .exe (Windows: Properties > Details). Keep the
+// version in step with Versions.cs.
+[assembly: AssemblyTitle(".P File Browser")]
+[assembly: AssemblyDescription("Inspects, edits and exports ZX81 .p files")]
+[assembly: AssemblyProduct("ZX81 BASIC Toolset")]
+[assembly: AssemblyCopyright("Copyright (c) Simon Round 2026")]
+[assembly: AssemblyVersion("1.00.0.0")]
+[assembly: AssemblyFileVersion("1.00.0.0")]
+
 namespace ZX81Compiler
 {
     public static class BrowserProgram
@@ -52,7 +63,7 @@ namespace ZX81Compiler
 
         public BrowserForm()
         {
-            Text = ".P File Browser";
+            Text = ".P File Browser " + Versions.Show(Versions.Browser);
             Width = 1180; Height = 800;
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 9f);
@@ -75,7 +86,7 @@ namespace ZX81Compiler
             export.DropDownItems.Add(new ToolStripMenuItem("Tape image (.tzx)...", null, (s, e) => ExportTape(true)));
             var help = new ToolStripMenuItem("&Help");
             help.DropDownItems.Add(new ToolStripMenuItem("&About", null, (s, e) => MessageBox.Show(this,
-                ".P File Browser\n\nInspect ZX81 .p files: system variables, memory map, BASIC listing, screen, variables, hex and Z80 disassembly, graphics; export to text, .wav and .tzx." + UiCommon.AboutText, "About")));
+                ".P File Browser " + Versions.Show(Versions.Browser) + "\n\nInspect ZX81 .p files: system variables, memory map, BASIC listing, screen, variables, hex and Z80 disassembly, graphics; export to text, .wav and .tzx." + UiCommon.AboutText, "About")));
             menu.Items.Add(file); menu.Items.Add(export); menu.Items.Add(help);
 
             var tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
@@ -120,7 +131,7 @@ namespace ZX81Compiler
                 LoadInto(PFile.Load(file));
                 path = file;
                 edited = false;
-                Text = ".P File Browser - " + Path.GetFileName(file);
+                Text = ".P File Browser " + Versions.Show(Versions.Browser) + " - " + Path.GetFileName(file);
                 status.Text = Path.GetFileName(file) + ": " + p.Data.Length + " bytes, " + p.Lines.Count + " BASIC lines. " + p.AutoRunDescription() + ".";
             }
             catch (Exception e) { UiCommon.Error(this, "Could not open the file:\n" + e.Message); }

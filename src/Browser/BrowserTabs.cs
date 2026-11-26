@@ -405,6 +405,23 @@ namespace ZX81Compiler
                     a += n;
                     continue;
                 }
+                if (ca.CalcBytes[a] && !ca.InstrStarts.Contains(a))
+                {
+                    // the bytes after RST 28h (calculator codes, up to 34h end-calc) or
+                    // RST 08h (error report): one row, with their names
+                    int n = 1;
+                    if (p.Mem[a - 1] != 0xCF)
+                        while (a + n < end && n < 16 && ca.CalcBytes[a + n] && !ca.InstrStarts.Contains(a + n) && p.Mem[a + n - 1] != 0x34) n++;
+                    var c = new DisRow { Addr = a, Len = n, Traced = true };
+                    var hb = new StringBuilder(); var db = new List<string>();
+                    for (int k = 0; k < n; k++) { hb.Append(p.Mem[a + k].ToString("X2")).Append(' '); db.Add(Z80Disasm.Hex(p.Mem[a + k], 2)); }
+                    c.Bytes = hb.ToString().TrimEnd();
+                    c.Text = "DB " + string.Join(",", db);
+                    c.Note = (ca.Labels.Contains(a) ? "L" + a.ToString("X4") + ": " : "") + Z80Disasm.CalcComment(p.Mem, a, n);
+                    list.Add(c);
+                    a += n;
+                    continue;
+                }
                 var ins = Z80Disasm.Decode(p.Mem, a, AddrLabel);
                 bool traced = ca.InstrStarts.Contains(a);
                 int len = ins.Len;
@@ -423,7 +440,6 @@ namespace ZX81Compiler
                 }
                 else r.Text = ins.Text;
                 r.Note = ca.Labels.Contains(a) ? "L" + a.ToString("X4") + ":" : "";
-                if (ca.CalcBytes[a]) r.Note += " calculator literal / data";
                 list.Add(r);
                 a += Math.Max(1, len);
             }
@@ -585,7 +601,7 @@ namespace ZX81Compiler
                 int keepRow = lvHex.SelectedIndices.Count > 0 ? lvHex.SelectedIndices[0] : 0;
                 LoadInto(PFile.Load(data));
                 edited = true;
-                Text = ".P File Browser - " + Path.GetFileName(path) + " (edited)";
+                Text = ".P File Browser " + Versions.Show(Versions.Browser) + " - " + Path.GetFileName(path) + " (edited)";
                 status.Text = parts.Length + " byte(s) changed at " + a0.ToString("X4") + "h. Use Save .p as... to keep the changes.";
                 tabs.SelectedIndex = 4;
                 if (keepRow < HexRows) { lvHex.SelectedIndices.Add(keepRow); lvHex.EnsureVisible(keepRow); }

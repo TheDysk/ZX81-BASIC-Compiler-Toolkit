@@ -11,6 +11,17 @@ using System.IO;
 using System.Linq;
 using System.Text;
 
+using System.Reflection;
+
+// Version and description stored in the .exe (Windows: Properties > Details). Keep the
+// version in step with Versions.cs.
+[assembly: AssemblyTitle("ZX81 BASIC Compiler")]
+[assembly: AssemblyDescription("Compiles ZX81 BASIC listings to Z80 machine code .p files")]
+[assembly: AssemblyProduct("ZX81 BASIC Toolset")]
+[assembly: AssemblyCopyright("Copyright (c) Simon Round 2026")]
+[assembly: AssemblyVersion("1.00.0.0")]
+[assembly: AssemblyFileVersion("1.00.0.0")]
+
 namespace ZX81Compiler
 {
     public static class Cli
@@ -32,9 +43,13 @@ namespace ZX81Compiler
                     case "--lower-inverse": opt.LowerIsInverse = true; break;
                     case "--maxstr": opt.MaxString = Math.Max(1, Math.Min(255, int.Parse(args[++i]))); break;   // clamp to 1..255
                     case "--asm": asmFile = args[++i]; break;
+                    case "--version":
+                        outw.WriteLine("zx81c - ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler));
+                        return 0;
                     case "-h":
                     case "--help":
                     case "/?":
+                        outw.WriteLine("zx81c - ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler));
                         outw.WriteLine("Usage: zx81c input.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--asm listing.asm]");
                         return 0;
                     default:

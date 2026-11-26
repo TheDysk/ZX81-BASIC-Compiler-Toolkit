@@ -24,6 +24,12 @@
 //     02BBh KEYBOARD - scan the keyboard: HL = key value, L = FFh if no key
 //     07BDh DECODE   - key value in BC -> HL points at the character code, carry set if valid
 //     0F23h FAST, 0F2Bh SLOW - the FAST and SLOW commands
+//     floating point: RST 28h (the calculator), 1520h STACK-BC, 158Ah FP-TO-BC,
+//         13F8h STK-FETCH, 12C3h STK-STORE (see the float chunks)
+//     printer: 0851h LPRINT-CH, 0869h COPY.  tape: 02FBh SAVE, 0343h LOAD (both
+//         entered after their NAME part), 02E7h SET-FAST, 0030h BC-SPACES.  03C3h NEW.
+//   The ROM calculator uses the alternate registers itself (EXX); that is safe, because
+//   the ROM runs it in SLOW mode all the time. The rule above is about our own code.
 //
 //  Z80 NOTES for readers new to it:
 //     Carry flag (C/NC) - set when a subtraction borrows, used as the result of compares
@@ -65,6 +71,22 @@ namespace ZX81Compiler
         public const int ROM_DECODE = 0x07BD;
         public const int ROM_FAST = 0x0F23;
         public const int ROM_SLOW = 0x0F2B;
+        public const int ROM_COPY = 0x0869;       // COPY: the screen to the ZX printer
+        public const int ROM_NEW = 0x03C3;        // NEW: wipe the program and restart
+        public const int ROM_STACK_BC = 0x1520;   // put BC (0-65535) on the calculator stack
+
+        /// <summary>The ROM calculator's operation codes (the bytes after RST 28h) used by
+        /// compiled code. 34h (end-calc) ends each sequence.</summary>
+        public static readonly Dictionary<string, int> CalcOps = new Dictionary<string, int> {
+            {"+",0x0F},{"-",0x03},{"*",0x04},{"/",0x05},{"**",0x06},{"OR",0x07},{"AND",0x08},
+            {"<=",0x09},{">=",0x0A},{"<>",0x0B},{">",0x0C},{"<",0x0D},{"=",0x0E},
+            {"NEG",0x18},{"VAL",0x1A},{"SIN",0x1C},{"COS",0x1D},{"TAN",0x1E},{"ASN",0x1F},{"ACS",0x20},
+            {"ATN",0x21},{"LN",0x22},{"EXP",0x23},{"INT",0x24},{"SQR",0x25},{"SGN",0x26},{"ABS",0x27},
+            {"STR$",0x2A},{"NOT",0x2C} };
+        /// <summary>Comparisons read their operation from register B as well (LD B,op first).</summary>
+        public static bool CalcNeedsB(int op) { return op >= 0x09 && op <= 0x0E; }
+        /// <summary>PI as the ROM's 5-byte value.</summary>
+        public static readonly byte[] PiBytes = { 0x82, 0x49, 0x0F, 0xDA, 0xA2 };
 
         // Layout of fixed runtime state at the start of BSS
         // (BSS = the variables area in free memory; its address is chosen by Compiler.cs).
@@ -466,6 +488,265 @@ rt_rand:                ; RAND n: n=0 uses the frame counter
 rz_set:
     LD (SEED),HL
     RET
+");
+            // ---------------- floating point (float islands) ----------------
+            // Floating-point parts of expressions use the ZX81 ROM's own calculator. Values
+            // go on the calculator stack (STKBOT 401Ah .. STKEND 401Ch, in free memory just
+            // after E_LINE - which is why the variables are placed further up when a program
+            // uses floating point). An operation is RST 28h followed by its code and 34h
+            // (end-calc). The ROM may also put strings (STR$, VAL) in the workspace below
+            // the calculator stack; rt_freset tidies that up after each island.
+            C("rt_finit", "", @"
+; At the start: remember where the calculator stack is, and how much is on it
+; (normally nothing; with LET A=1+USR 16514 the 1 is there, and must survive).
+rt_finit:
+    LD HL,(401Ah)           ; STKBOT
+    LD (FSTKB),HL
+    LD DE,(401Ch)           ; STKEND
+    LD (FSTKE),DE
+    EX DE,HL
+    OR A
+    SBC HL,DE
+    LD (FDEPTH),HL          ; bytes on the stack at the start
+    RET
+FSTKB:
+    DW 0
+FSTKE:
+    DW 0
+FDEPTH:
+    DW 0
+");
+            C("rt_freset", "rt_finit", @"
+; After a floating-point value has been used: if the calculator stack is back to
+; what it held at the start, throw away any workspace the ROM used (strings made
+; by STR$ and VAL). Preserves HL.
+rt_freset:
+    PUSH HL
+    LD HL,(401Ch)           ; STKEND
+    LD DE,(401Ah)           ; STKBOT
+    OR A
+    SBC HL,DE               ; bytes on the stack now
+    LD DE,(FDEPTH)
+    OR A
+    SBC HL,DE
+    JR NZ,fr_end            ; more than at the start: an outer island still needs it
+    LD HL,(401Ah)
+    LD DE,(FSTKB)
+    OR A
+    SBC HL,DE
+    JR Z,fr_end             ; no workspace in use
+    LD HL,(401Ah)           ; move what was there at the start back down...
+    LD BC,(FDEPTH)
+    LD A,B
+    OR C
+    JR Z,fr_set
+    LDIR
+fr_set:
+    LD HL,(FSTKB)           ; ...and put the pointers back
+    LD (401Ah),HL
+    LD HL,(FSTKE)
+    LD (401Ch),HL
+fr_end:
+    POP HL
+    RET
+");
+            C("rt_fpushi", "neg_hl", @"
+; Put the whole number in HL (-32768..32767) on the calculator stack
+rt_fpushi:
+    BIT 7,H
+    JR Z,fi_pos
+    CALL neg_hl             ; negative: stack -HL, then negate it
+    CALL fi_pos
+    RST 28h
+    DB 18h,34h              ; negate, end-calc
+    RET
+fi_pos:
+    LD B,H
+    LD C,L
+    JP 1520h                ; ROM STACK-BC
+");
+            C("rt_fplit", "", @"
+; Put the 5-byte floating-point number at HL on the calculator stack
+rt_fplit:
+    LD DE,(401Ch)           ; STKEND: the next free place
+    LD BC,5
+    LDIR
+    LD (401Ch),DE
+    RET
+");
+            C("rt_fpop", "neg_hl rt_freset", @"
+; Take the number off the calculator stack and round it to a whole number in HL,
+; as the ZX81 does when it needs a whole number (nearest, halves away from 0).
+rt_fpop:
+    CALL 158Ah              ; ROM FP-TO-BC: BC = rounded size, Z = positive, C = too big
+    JR C,fo_big
+    LD H,B
+    LD L,C
+    CALL NZ,neg_hl          ; negative
+    JP rt_freset
+fo_big:
+    RST 08h                 ; more than 65535: report B (integer out of range)
+    DB 0Ah
+");
+            C("rt_fstr", "", @"
+; After STR$ (calculator code 2Ah): HL = the text, BC = its length
+rt_fstr:
+    CALL 13F8h              ; ROM STK-FETCH: DE = start, BC = length
+    EX DE,HL
+    RET
+");
+            C("rt_fval", "", @"
+; VAL: HL = text, BC = length -> the value on the calculator stack.
+; The ROM works it out exactly as the ZX81 does (so VAL of the text 2*3.5 is 7).
+rt_fval:
+    EX DE,HL
+    CALL 12C3h              ; ROM STK-STORE: put the string on the calculator stack
+    RST 28h
+    DB 1Ah,34h              ; val, end-calc
+    RET
+");
+            C("rt_frnd", "rt_rnd16", @"
+; RND on its own: a random number from 0 to just under 1, on the calculator stack
+rt_frnd:
+    CALL rt_rnd16           ; HL = 1..65535
+    LD B,H
+    LD C,L
+    CALL 1520h              ; ROM STACK-BC
+    LD HL,(401Ch)
+    LD DE,-5
+    ADD HL,DE               ; HL = its exponent byte
+    LD A,(HL)
+    SUB 16                  ; divide by 65536
+    LD (HL),A
+    RET
+");
+            // ---------------- ZX printer (LPRINT) ----------------
+            // Characters go through the ROM's LPRINT-CH (0851h), which collects a line in
+            // the printer buffer (PRBUFF, 403Ch) and prints it at NEWLINE or when it is full.
+            // With no printer connected the ROM just empties the buffer.
+            C("rt_lprchr", "", @"
+rt_lnewline:
+    LD A,76h                ; NEWLINE
+rt_lprchr:              ; send ZX81 character A to the printer. Preserves BC, DE, HL
+    PUSH HL
+    PUSH DE
+    PUSH BC
+    CP 76h
+    JR Z,lc_out
+    BIT 6,A                 ; codes 40h-7Fh and C0h-FFh have no picture: print ?
+    JR Z,lc_out
+    LD A,0Fh
+lc_out:
+    CALL 0851h              ; ROM LPRINT-CH
+    POP BC
+    POP DE
+    POP HL
+    RET
+");
+            C("rt_lprstr", "rt_lprchr", @"
+rt_lprstr:              ; LPRINT BC characters from HL
+    LD A,B
+    OR C
+    RET Z
+lps_lp:
+    LD A,(HL)
+    CALL rt_lprchr
+    INC HL
+    DEC BC
+    LD A,B
+    OR C
+    JR NZ,lps_lp
+    RET
+");
+            C("rt_lprnum", "rt_numstr rt_lprstr", @"
+rt_lprnum:              ; LPRINT a whole number in HL
+    CALL rt_numstr
+    JP rt_lprstr
+");
+            C("rt_lat", "", @"
+rt_lat:                 ; LPRINT AT HL,DE: like the ZX81, only the column matters
+    LD A,E
+    AND 31
+    ADD A,0BCh              ; PR_CC = 80h + low byte of the buffer address (403Ch + column)
+    LD (4038h),A
+    RET
+");
+            C("rt_ltab", "rt_lprchr", @"
+lpr_col:                ; A = the printer's column (0-32)
+    LD A,(4038h)            ; PR_CC
+    AND 7Fh
+    SUB 3Ch
+    RET
+rt_lcomma:              ; LPRINT comma: column 16, or the next line if already past it
+    CALL lpr_col
+    CP 16
+    JP NC,rt_lnewline
+    LD L,16
+    JR lt_to
+rt_ltab:                ; LPRINT TAB L
+    LD A,L
+    AND 31
+    LD L,A
+    CALL lpr_col
+    CP L
+    JR Z,lt_to
+    CALL NC,rt_lnewline     ; already past it: go to the next line
+lt_to:                      ; print spaces until the column is L
+    CALL lpr_col
+    CP L
+    RET NC
+    XOR A
+    CALL rt_lprchr
+    JR lt_to
+");
+            // ---------------- tape: SAVE and LOAD ----------------
+            // The ROM's SAVE and LOAD start by reading the name from the BASIC line
+            // (routine NAME), which compiled code doesn't have, so they are entered just
+            // after that part, with DE = the name as NAME would leave it: a copy in the
+            // workspace with the last character made inverse.
+            C("rt_tname", "", @"
+rt_tname:               ; HL = name, BC = length -> DE = workspace copy
+    LD A,B
+    OR C
+    JR NZ,tn_ok
+    RST 08h                 ; empty name: report F
+    DB 0Eh
+tn_ok:
+    PUSH HL
+    PUSH BC
+    RST 30h                 ; ROM BC-SPACES: BC bytes in the workspace, DE = the first
+    POP BC
+    POP HL
+    PUSH DE
+    LDIR
+    EX DE,HL
+    DEC HL
+    SET 7,(HL)              ; mark the last character
+    POP DE
+    JP 02E7h                ; ROM SET-FAST (tape needs FAST mode)
+");
+            C("rt_save", "rt_tname rt_freset", @"
+rt_save:                ; SAVE: HL = name, BC = length
+    CALL rt_tname
+    CALL 02FBh              ; ROM SAVE (after NAME): write the program to tape
+    JP rt_freset            ; give back the workspace
+");
+            C("rt_load", "rt_tname", @"
+; LOAD: HL = name, BC = length. The loaded program replaces this one, so this
+; doesn't come back: the stack is reset as for STOP, and when the ROM's LOAD
+; returns, BASIC carries on with the new program (running it if it auto-runs).
+rt_load:
+    LD SP,(ENTRYSP)
+    LD A,B
+    OR C
+    JR NZ,ld_name
+    CALL 02E7h              ; LOAD "": SET-FAST,
+    SCF                     ; and carry set = load the first program found
+    JP 0343h                ; ROM LOAD (after NAME)
+ld_name:
+    CALL rt_tname
+    OR A                    ; carry clear: load the program with this name
+    JP 0343h
 ");
             // ---------------- screen ----------------
             C("rt_cls", "", @"
@@ -1330,7 +1611,8 @@ gt_fnd:
         {
             {"rt_gt","rt_lt"},{"rt_ge","rt_lt"},{"rt_le","rt_lt"},{"rt_eq","rt_lt"},{"rt_ne","rt_lt"},
             {"rt_or","rt_and"},{"rt_not","rt_and"},{"rt_rand","rt_randomize"},{"rt_newline","rt_prchr"},
-            {"rt_comma","rt_tab"},{"rt_appchr","rt_append"},{"pr_addr","rc_addr"}
+            {"rt_comma","rt_tab"},{"rt_appchr","rt_append"},{"pr_addr","rc_addr"},
+            {"rt_lnewline","rt_lprchr"},{"rt_lcomma","rt_ltab"}
         };
     }
 }

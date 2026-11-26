@@ -53,7 +53,7 @@ namespace ZX81Compiler
         /// <summary>Build the window and its controls.</summary>
         public MainForm()
         {
-            Text = "ZX81 BASIC Compiler";
+            Text = "ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler);
             Width = 1000; Height = 720;
             StartPosition = FormStartPosition.CenterScreen;
             AllowDrop = true;    // files can be dragged onto the window
@@ -76,7 +76,7 @@ namespace ZX81Compiler
             var help = new ToolStripMenuItem("&Help");
             help.DropDownItems.Add(new ToolStripMenuItem("&Supported BASIC...", null, (s, e) => ShowHelp()));
             help.DropDownItems.Add(new ToolStripMenuItem("&About", null, (s, e) => MessageBox.Show(this,
-                "ZX81 BASIC Compiler\n\nCompiles a ZX81 BASIC text listing into Z80 machine code held in line 0 (REM), with line 10 RAND USR 16514, saved as a .p file.\n\nTarget: ZX81 with 16K RAM.\n\nCopyright (c) Simon Round 2026\nEmail: " + ContactEmail(), "About")));
+                "ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler) + "\n\nCompiles a ZX81 BASIC text listing into Z80 machine code held in line 0 (REM), with line 10 RAND USR 16514, saved as a .p file.\n\nTarget: ZX81 with 16K RAM.\n\nCopyright (c) Simon Round 2026\nEmail: " + ContactEmail(), "About")));
             menu.Items.Add(file); menu.Items.Add(build); menu.Items.Add(help);
 
             // ---- toolbar ----
@@ -169,7 +169,7 @@ namespace ZX81Compiler
         /// <summary>Window title: file name, with * if there are unsaved changes.</summary>
         void UpdateTitle()
         {
-            Text = "ZX81 BASIC Compiler - " + (listingPath == null ? "untitled" : Path.GetFileName(listingPath)) + (dirty ? " *" : "");
+            Text = "ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler) + " - " + (listingPath == null ? "untitled" : Path.GetFileName(listingPath)) + (dirty ? " *" : "");
         }
 
         /// <summary>Before throwing the listing away: offer to save unsaved changes.
@@ -379,19 +379,40 @@ STATEMENTS
   NEXT, DIM, INPUT, POKE, PLOT, UNPLOT, SCROLL, CLS, PAUSE, RAND,
   STOP, CLEAR, RUN, FAST, SLOW, REM.
   GOTO/GOSUB to a calculated line number (GOTO 100*N) works.
-  LPRINT, LLIST, COPY, LIST, SAVE, LOAD, CONT are ignored (warning).
+  LPRINT (with ; , AT TAB) and COPY use the ZX printer through the ROM.
+  SAVE ""name"" saves the program to tape and carries on; LOAD ""name""
+  (or LOAD """") loads another program, which then runs if it auto-runs.
+  NEW wipes the program, as on the ZX81.
+  LIST, LLIST and CONT do nothing in a compiled program (warning).
 
 FUNCTIONS
-  ABS SGN INT SQR PEEK USR CODE LEN VAL CHR$ STR$ INKEY$ RND
+  ABS SGN INT SQR PEEK USR CODE LEN VAL CHR$ STR$ INKEY$ RND PI
+  SIN COS TAN ASN ACS ATN LN EXP
   NOT AND OR, = <> < > <= >= (numbers and strings), + - * / **
   String slicing: A$(2), A$(2 TO 5), A$( TO 3), A$(4 TO ).
 
+WHOLE NUMBERS AND FLOATING POINT
+  Numbers are normally whole numbers from -32768 to 32767, which is
+  what makes compiled programs fast. An expression that uses SIN COS
+  TAN ASN ACS ATN LN EXP SQR PI VAL, RND on its own, or a number with
+  a decimal point (0.5, 1.0) is worked out in floating point by the
+  ZX81 ROM's own calculator, exactly as the ZX81 would, e.g.
+      PLOT 32+20*COS (A*PI/180),22+20*SIN (A*PI/180)
+  Where the result is used as a number - stored in a variable, used by
+  PLOT, AT, a subscript... - it is rounded to the nearest whole number,
+  as the ZX81 does when it needs a whole number. PRINT and STR$ show
+  the full value (PRINT SIN 1 shows 0.84147099). This is slower, like
+  the ZX81 itself, so keep it out of the busiest loops.
+  Errors in floating point (SQR -1, LN 0, ...) stop the program with
+  the ZX81 report code, e.g. A/10. VAL works out any expression in its
+  string, but can't see the program's variables.
+
 DIFFERENCES FROM ZX81 BASIC
-  * Numbers are whole numbers from -32768 to 32767 (16 bit), so
-    division truncates: 7/2 = 3.  SIN, COS, TAN, ASN, ACS, ATN,
-    LN, EXP and PI are not available.
-  * RND must be used as RND*n, which gives a whole number from 0 to
-    n-1, so the usual INT (RND*6)+1 works as expected.
+  * Outside floating point, maths is whole-number: 7/2 = 3, 2**-1 = 0.
+    Write 7/2.0 (or 7/2*1.0) to get 3.5.
+  * Variables hold whole numbers, so LET X=2.5 stores 3.
+  * RND*n gives a fast whole number from 0 to n-1, so the usual
+    INT (RND*6)+1 works as expected. RND on its own is 0 to 0.99998.
   * Variables start at 0 (no 'variable not found' error).
   * DIM sizes must be constant numbers. Arrays are not bounds checked.
   * Ordinary string variables hold up to 'Max string length'
@@ -400,7 +421,6 @@ DIFFERENCES FROM ZX81 BASIC
   * Printing past the bottom of the screen scrolls instead of stopping
     with error 5.
   * Only one statement per line (as on the ZX81).
-  * VAL only converts plain whole numbers, e.g. VAL ""123"".
   * INPUT accepts a number or text typed on the bottom line; NEWLINE
     ends it and RUBOUT (SHIFT 0) deletes.
 ";

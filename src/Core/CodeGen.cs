@@ -23,6 +23,14 @@
 //    use depth f+1 or more, or it would overwrite it. Example: A$+B$ < C$+D$ builds
 //    A$+B$ in T_0 and C$+D$ in T_1 before comparing them.
 //
+//  FLOATING POINT ("FLOAT ISLANDS", see FloatMath in Ast.cs)
+//  -------------------------------------------------------
+//    An expression containing SIN, PI, 0.5 ... is worked out on the ROM calculator's
+//    stack instead of in HL (GenFloat): values are put there (rt_fpushi, rt_fplit,
+//    STACK-BC), each operation is RST 28h + its code + 34h, and the result is either
+//    rounded into HL (rt_fpop) or turned into text by the ROM's STR$ (rt_fstr). The
+//    rest of the program stays in fast 16-bit whole numbers.
+//
 //  LABELS
 //  ------
 //    L_10 / E_10   start / end of BASIC line 10 (an IF that is false jumps to E_n)
@@ -68,6 +76,10 @@ namespace ZX81Compiler
         readonly Dictionary<string, string> literals = new Dictionary<string, string>();         // string literal contents -> label
         readonly List<KeyValuePair<string, byte[]>> litList = new List<KeyValuePair<string, byte[]>>();  // literals in order of use
         int maxDepth = -1;       // highest temporary string buffer number used (-1 = none)
+        /// <summary>True if the program uses the ROM's calculator or workspace (floating
+        /// point, VAL, SAVE, LOAD). Then rt_finit runs at the start, and Compiler.cs leaves
+        /// extra room above E_LINE for the calculator stack before the variables.</summary>
+        public bool UsesCalc;
         bool needLineTab;        // a calculated GOTO/GOSUB/RUN needs the line table
         int lblCount;            // counter for NewLabel()
         int curLine;             // BASIC line being compiled (for error messages)
@@ -137,6 +149,8 @@ namespace ZX81Compiler
             Op("LD (ENTRYSP),SP");
             Call("rt_memcheck");
             Call("rt_init");
+            UsesCalc = prog.Any(ln => StmtUsesCalc(ln.Stmt));
+            if (UsesCalc) Call("rt_finit");   // note where the ROM's calculator stack is
             Use("rt_stop");
 
             // Each BASIC line. An error in one line is recorded and compilation carries
@@ -149,6 +163,7 @@ namespace ZX81Compiler
                 Lbl("L_" + ln.Number);
                 try
                 {
+                    NormStmt(ln.Stmt);
                     GenStmt(ln.Stmt, i);
                 }
                 catch (CompileError e)
@@ -240,6 +255,14 @@ namespace ZX81Compiler
         void GenStmt(Stmt s, int idx)
         {
             if (s is PrintStmt) { GenPrint((PrintStmt)s); return; }
+            if (s is TapeStmt)
+            {
+                // SAVE / LOAD "name": through the ROM's tape routines
+                var t = (TapeStmt)s;
+                GenStrRegion(t.Name, 0);
+                Call(t.Load ? "rt_load" : "rt_save");
+                return;
+            }
             if (s is LetStmt) { var l = (LetStmt)s; GenAssign(l.Target, l.Value, false); return; }
             if (s is IfStmt)
             {
@@ -346,6 +369,8 @@ namespace ZX81Compiler
                     case "CLEAR": Call("rt_clear"); return;
                     case "FAST": Op("CALL " + Runtime.ROM_FAST); return;   // ROM routines
                     case "SLOW": Op("CALL " + Runtime.ROM_SLOW); return;
+                    case "COPY": Op("CALL " + Runtime.ROM_COPY); return;   // screen to the ZX printer
+                    case "NEW": Op("JP " + Runtime.ROM_NEW); return;       // wipe everything, as on the ZX81
                     case "NOP": return;
                 }
             }
@@ -362,6 +387,9 @@ namespace ZX81Compiler
         {
             string v = f.Var.ToString();
             UseNumVar(v); forVars.Add(v);
+            WarnIfRounded(f.From, "FOR variable " + v);
+            WarnIfRounded(f.To, "FOR limit (TO)");
+            WarnIfRounded(f.Step, "FOR STEP");
             GenNum(f.From, 0);
             Op("LD (V_" + v + "),HL");
             GenNum(f.To, 0);
@@ -396,32 +424,39 @@ namespace ZX81Compiler
         }
 
         // ---------------- PRINT ----------------
-        /// <summary>PRINT: one runtime call per item, then a newline unless the
-        /// statement ended with ; or ,</summary>
+        /// <summary>PRINT (or LPRINT): one runtime call per item, then a newline unless the
+        /// statement ended with ; or ,  LPRINT uses the rt_l... printer versions.
+        /// A floating-point number is printed as its STR$, which is what the ZX81 shows.</summary>
         void GenPrint(PrintStmt p)
         {
+            string pre = p.Printer ? "rt_l" : "rt_";
             foreach (var it in p.Items)
             {
                 switch (it.Kind)
                 {
                     case PIKind.Expr:
-                        if (it.A.Type == VT.Num) { GenNum(it.A, 0); Call("rt_prnum"); }
-                        else { GenStrRegion(it.A, 0); Call("rt_prstr"); }
+                        if (it.A.Type == VT.Num && !FloatMath.IsFloat(it.A)) { GenNum(it.A, 0); Call(pre + "prnum"); }
+                        else
+                        {
+                            Expr se = it.A.Type == VT.Num ? new Func("STR$", it.A, VT.Str) { Line = it.A.Line } : it.A;
+                            GenStrRegion(se, 0);
+                            Call(pre + "prstr");
+                        }
                         break;
                     case PIKind.At:
                         GenOperands(it.A, it.B, 0);    // HL = row, DE = column
-                        Call("rt_at");
+                        Call(pre + "at");
                         break;
                     case PIKind.Tab:
                         GenNum(it.A, 0);
-                        Call("rt_tab");
+                        Call(pre + "tab");
                         break;
                     case PIKind.Comma:
-                        Call("rt_comma");
+                        Call(pre + "comma");
                         break;
                 }
             }
-            if (p.Newline) Call("rt_newline");
+            if (p.Newline) Call(pre + "newline");
         }
 
         // ---------------- assignment / INPUT ----------------
@@ -456,6 +491,7 @@ namespace ZX81Compiler
             {
                 // INPUT reads a line of text, then rt_val converts it to a number in HL
                 if (fromInput) { Call("rt_input"); Call("rt_val"); }
+                else WarnIfRounded(value, "variable " + BasicWriter.Expr(target));
                 var nv = target as NumVar;
                 if (nv != null)
                 {
@@ -563,6 +599,14 @@ namespace ZX81Compiler
         void GenNum(Expr e, int f)
         {
             if (e is NumLit) { Op("LD HL," + ((NumLit)e).Value); return; }
+            if (e is FloatLit) { Op("LD HL," + RoundConst((FloatLit)e)); return; }
+            if (FloatMath.IsFloat(e))
+            {
+                // a float island: work it out with the ROM calculator, then round it
+                GenFloat(e, f);
+                Call("rt_fpop");
+                return;
+            }
             if (e is NumVar) { var v = (NumVar)e; UseNumVar(v.Name); Op("LD HL,(V_" + v.Name + ")"); return; }
             if (e is NumArr)
             {
@@ -579,8 +623,6 @@ namespace ZX81Compiler
                 return;
             }
             if (e is RndN) { GenNum(((RndN)e).N, f); Call("rt_rndn"); return; }
-            if (e is RndBare)
-                throw Err("RND on its own gives a fraction (0 to 1), which integer compiled code can't hold. Use it as RND*n (gives 0 to n-1), e.g. INT (RND*6)+1");
             if (e is Func) { GenFunc((Func)e, f); return; }
             var b = e as Binary;
             if (b == null) throw Err("internal: bad numeric expression");
@@ -637,6 +679,191 @@ namespace ZX81Compiler
             throw Err("internal: unknown operator " + b.Op);
         }
 
+        // ---------------- floating point ----------------
+        /// <summary>Put the value of e on the ROM's calculator stack, worked out in floating
+        /// point as the ZX81 would (see FloatMath). Whole-number parts that aren't
+        /// arithmetic (variables, PEEK, CODE, string comparisons ...) are worked out
+        /// as usual and then stacked. Every operation is RST 28h, its code, 34h.</summary>
+        void GenFloat(Expr e, int f)
+        {
+            if (e is FloatLit) { Op("LD HL," + Literal(((FloatLit)e).Bytes)); Call("rt_fplit"); return; }
+            if (e is PiConst) { Op("LD HL," + Literal(Runtime.PiBytes)); Call("rt_fplit"); return; }
+            var n = e as NumLit;
+            if (n != null)
+            {
+                if (n.Unsigned) { Op("LD BC," + n.Value); Op("CALL " + Runtime.ROM_STACK_BC); }   // 32768..65535
+                else { Op("LD HL," + n.Value); Call("rt_fpushi"); }
+                return;
+            }
+            if (e is RndBare) { Call("rt_frnd"); return; }
+            var rn = e as RndN;
+            if (rn != null) { Call("rt_frnd"); GenFloat(rn.N, f); Calc("*"); return; }   // RND*n with n a float
+            var fn = e as Func;
+            if (fn != null && fn.Name == "VAL") { GenStrRegion(fn.Arg, f); Call("rt_fval"); return; }
+            if (fn != null && (FloatMath.FloatFuncs.Contains(fn.Name) || FloatMath.PassFuncs.Contains(fn.Name)))
+            {
+                GenFloat(fn.Arg, f);
+                Calc(fn.Name);
+                return;
+            }
+            var u = e as Unary;
+            if (u != null) { GenFloat(u.A, f); Calc(u.Op); return; }
+            var b = e as Binary;
+            if (b != null && b.L.Type == VT.Num && FloatMath.PassOps.Contains(b.Op))
+            {
+                GenFloat(b.L, f);
+                GenFloat(b.R, f);
+                Calc(b.Op);
+                return;
+            }
+            GenNum(e, f);
+            Call("rt_fpushi");
+        }
+
+        /// <summary>One ROM calculator operation on the top of the calculator stack.</summary>
+        void Calc(string op)
+        {
+            int c = Runtime.CalcOps[op];
+            string hex = "0" + c.ToString("X2") + "h";
+            if (Runtime.CalcNeedsB(c)) Op("LD B," + hex);     // comparisons also read B
+            Op("RST 28h");
+            Op("DB " + hex + ",34h");
+        }
+
+        /// <summary>A constant like 2.5 used where a whole number is needed: round it now
+        /// (as the ROM would at run time) and say so.</summary>
+        int RoundConst(FloatLit c)
+        {
+            double r = FloatMath.Round(c.Value);
+            string txt = c.Value.ToString("G9", System.Globalization.CultureInfo.InvariantCulture);
+            if (r < -32768 || r > 65535)
+            {
+                Diags.Add(new Diagnostic { BasicLine = curLine, Message = "number " + txt + " is too big for a whole number (-32768 to 65535)" });
+                return (int)((long)r & 0xFFFF);
+            }
+            if (r != c.Value)
+                Diags.Add(new Diagnostic { BasicLine = curLine, Message = "number " + txt + " is not a whole number; a whole number is needed here, so it becomes " + r });
+            return (int)r & 0xFFFF;
+        }
+
+        /// <summary>Warn when a floating-point value that may have a fraction is rounded
+        /// to be stored (variables and FOR loops hold whole numbers): LET A=H*PI/6 stores
+        /// 1, not 0.5236. Not for INT (...), SGN, comparisons, or constants (RoundConst
+        /// warns about those itself).</summary>
+        void WarnIfRounded(Expr value, string what)
+        {
+            if (value == null || !FloatMath.IsFloat(value) || value is FloatLit) return;
+            var fn = value as Func;
+            if (fn != null && (fn.Name == "INT" || fn.Name == "SGN")) return;
+            var b = value as Binary;
+            if (b != null && (CmpRt.ContainsKey(b.Op) || b.Op == "AND" || b.Op == "OR")) return;
+            if (value is Unary && ((Unary)value).Op == "NOT") return;
+            Diags.Add(new Diagnostic { BasicLine = curLine, Message = what + " holds whole numbers, so the floating-point value " +
+                BasicWriter.Expr(value) + " is rounded. To keep the fraction, use the expression where it is needed (e.g. COS (" +
+                BasicWriter.Expr(value) + ")) instead of storing it." });
+        }
+
+        // ---------------- constants like 2.5 where a whole number is needed ----------------
+        /// <summary>Before generating a statement: a floating-point constant (2.5, 34.0)
+        /// used where a whole number is needed becomes that whole number (rounded, with a
+        /// warning if it had a fraction), so the code is the same as for 34. Constants
+        /// that are worked out in floating point (inside SIN ..., or PRINTed) stay.</summary>
+        void NormStmt(Stmt s)
+        {
+            if (s is PrintStmt)
+                foreach (var it in ((PrintStmt)s).Items) { it.A = Norm(it.A, it.Kind == PIKind.Expr); it.B = Norm(it.B, false); }
+            else if (s is LetStmt) { var l = (LetStmt)s; l.Target = Norm(l.Target, false); l.Value = Norm(l.Value, false); }
+            else if (s is IfStmt) { var f = (IfStmt)s; f.Cond = Norm(f.Cond, true); NormStmt(f.Then); }   // IF 0.5 is true
+            else if (s is GotoStmt) ((GotoStmt)s).Target = Norm(((GotoStmt)s).Target, false);
+            else if (s is ForStmt) { var f = (ForStmt)s; f.From = Norm(f.From, false); f.To = Norm(f.To, false); f.Step = Norm(f.Step, false); }
+            else if (s is InputStmt) ((InputStmt)s).Target = Norm(((InputStmt)s).Target, false);
+            else if (s is PokeStmt) { var p = (PokeStmt)s; p.Addr = Norm(p.Addr, false); p.Value = Norm(p.Value, false); }
+            else if (s is PlotStmt) { var p = (PlotStmt)s; p.X = Norm(p.X, false); p.Y = Norm(p.Y, false); }
+            else if (s is PauseStmt) ((PauseStmt)s).N = Norm(((PauseStmt)s).N, false);
+            else if (s is RandStmt) ((RandStmt)s).N = Norm(((RandStmt)s).N, false);
+            else if (s is RunStmt) ((RunStmt)s).N = Norm(((RunStmt)s).N, false);
+            else if (s is TapeStmt) ((TapeStmt)s).Name = Norm(((TapeStmt)s).Name, false);
+        }
+
+        /// <summary>See NormStmt. fl = the value of e is used as floating point here.</summary>
+        Expr Norm(Expr e, bool fl)
+        {
+            if (e == null) return null;
+            var c = e as FloatLit;
+            if (c != null)
+            {
+                if (fl) return e;
+                var n = new NumLit(RoundConst(c)) { Line = e.Line };
+                n.Unsigned = n.Value > 32767 && c.Value > 0;
+                return n;
+            }
+            // which children are worked out in floating point (see GenFloat)?
+            bool kids = FloatMath.IsFloat(e);
+            var b = e as Binary;
+            if (b != null)
+            {
+                bool numeric = b.L.Type == VT.Num && FloatMath.PassOps.Contains(b.Op);
+                b.L = Norm(b.L, kids && numeric);
+                b.R = Norm(b.R, (kids && numeric) || (b.Op == "AND" && b.Type == VT.Str));   // A$ AND 0.5
+                return e;
+            }
+            var u = e as Unary; if (u != null) { u.A = Norm(u.A, kids); return e; }
+            var f = e as Func;
+            if (f != null && f.Arg != null)
+            {
+                bool argFloat = (f.Name == "STR$") ||
+                    (kids && f.Name != "VAL" && (FloatMath.FloatFuncs.Contains(f.Name) || FloatMath.PassFuncs.Contains(f.Name)));
+                f.Arg = Norm(f.Arg, argFloat);
+                return e;
+            }
+            var r = e as RndN; if (r != null) { r.N = Norm(r.N, kids); return e; }
+            var a = e as NumArr; if (a != null) { for (int k = 0; k < a.Index.Count; k++) a.Index[k] = Norm(a.Index[k], false); return e; }
+            var sv = e as StrVar; if (sv != null) { foreach (var x in sv.Args) { x.From = Norm(x.From, false); x.To = Norm(x.To, false); } return e; }
+            var se = e as SliceExpr; if (se != null) { se.Base = Norm(se.Base, false); se.Arg.From = Norm(se.Arg.From, false); se.Arg.To = Norm(se.Arg.To, false); return e; }
+            return e;
+        }
+
+        /// <summary>Does the statement use the ROM calculator or workspace?</summary>
+        static bool StmtUsesCalc(Stmt s)
+        {
+            if (s is TapeStmt) return true;
+            return StmtExprs(s).Any(ExprUsesCalc);
+        }
+
+        /// <summary>All the expressions directly inside a statement.</summary>
+        static IEnumerable<Expr> StmtExprs(Stmt s)
+        {
+            var list = new List<Expr>();
+            if (s is PrintStmt) foreach (var it in ((PrintStmt)s).Items) { list.Add(it.A); list.Add(it.B); }
+            else if (s is LetStmt) { list.Add(((LetStmt)s).Target); list.Add(((LetStmt)s).Value); }
+            else if (s is IfStmt) { list.Add(((IfStmt)s).Cond); list.AddRange(StmtExprs(((IfStmt)s).Then)); }
+            else if (s is GotoStmt) list.Add(((GotoStmt)s).Target);
+            else if (s is ForStmt) { var fs = (ForStmt)s; list.Add(fs.From); list.Add(fs.To); list.Add(fs.Step); }
+            else if (s is InputStmt) list.Add(((InputStmt)s).Target);
+            else if (s is PokeStmt) { list.Add(((PokeStmt)s).Addr); list.Add(((PokeStmt)s).Value); }
+            else if (s is PlotStmt) { list.Add(((PlotStmt)s).X); list.Add(((PlotStmt)s).Y); }
+            else if (s is PauseStmt) list.Add(((PauseStmt)s).N);
+            else if (s is RandStmt) list.Add(((RandStmt)s).N);
+            else if (s is RunStmt) list.Add(((RunStmt)s).N);
+            else if (s is TapeStmt) list.Add(((TapeStmt)s).Name);
+            return list.Where(x => x != null);
+        }
+
+        /// <summary>Does the expression (or anything inside it) use floating point?</summary>
+        static bool ExprUsesCalc(Expr e)
+        {
+            if (e == null) return false;
+            if (FloatMath.IsFloat(e)) return true;
+            var b = e as Binary; if (b != null) return ExprUsesCalc(b.L) || ExprUsesCalc(b.R);
+            var u = e as Unary; if (u != null) return ExprUsesCalc(u.A);
+            var f = e as Func; if (f != null) return ExprUsesCalc(f.Arg);
+            var r = e as RndN; if (r != null) return ExprUsesCalc(r.N);
+            var a = e as NumArr; if (a != null) return a.Index.Any(ExprUsesCalc);
+            var sv = e as StrVar; if (sv != null) return sv.Args.Any(x => ExprUsesCalc(x.From) || ExprUsesCalc(x.To));
+            var se = e as SliceExpr; if (se != null) return ExprUsesCalc(se.Base) || ExprUsesCalc(se.Arg.From) || ExprUsesCalc(se.Arg.To);
+            return false;
+        }
+
         /// <summary>Functions that return a number.</summary>
         void GenFunc(Func fn, int f)
         {
@@ -645,15 +872,13 @@ namespace ZX81Compiler
                 case "ABS": GenNum(fn.Arg, f); Call("rt_abs"); return;
                 case "SGN": GenNum(fn.Arg, f); Call("rt_sgn"); return;
                 case "INT": GenNum(fn.Arg, f); return;           // values are already whole numbers
-                case "SQR": GenNum(fn.Arg, f); Call("rt_sqr"); return;
                 case "PEEK": GenNum(fn.Arg, f); Op("LD L,(HL)"); Op("LD H,0"); return;
                 // USR: call the machine code; like the ZX81, the result is whatever is in BC
                 case "USR": GenNum(fn.Arg, f); Call("rt_usr"); Op("LD H,B"); Op("LD L,C"); return;
                 case "CODE": GenStrRegion(fn.Arg, f); Call("rt_code"); return;
                 case "LEN": GenStrRegion(fn.Arg, f); Op("LD L,C"); Op("LD H,0"); return;   // length is in C
-                case "VAL": GenStrRegion(fn.Arg, f); Call("rt_val"); return;
             }
-            throw Err("internal: function " + fn.Name);
+            throw Err("internal: function " + fn.Name);   // (VAL and SIN etc. are floating point: see GenFloat)
         }
 
         /// <summary>Leave the address of a numeric array element in HL.
@@ -709,7 +934,7 @@ namespace ZX81Compiler
                     GenJumpIfFalse(b.R, label);
                     return;
                 }
-                if (CmpRt.ContainsKey(b.Op))
+                if (CmpRt.ContainsKey(b.Op) && !FloatMath.IsFloat(b))
                 {
                     // X=0 / X<>0: just test whether HL is zero
                     var rl = b.R as NumLit;
@@ -747,6 +972,16 @@ namespace ZX81Compiler
                 }
             }
             // anything else: work out the value and test for zero
+            if (FloatMath.IsFloat(c))
+            {
+                // floating point: true means not zero (0.3 is true), so test NOT c, which is 1 or 0
+                GenFloat(c, 0);
+                Calc("NOT");
+                Call("rt_fpop");
+                Op("LD A,H"); Op("OR L");
+                Op("JP NZ," + label);
+                return;
+            }
             GenNum(c, 0);
             Op("LD A,H"); Op("OR L");
             Op("JP Z," + label);
@@ -824,9 +1059,21 @@ namespace ZX81Compiler
             if (b != null && b.Op == "AND")
             {
                 string skip = NewLabel();
-                GenNum(b.R, f);
-                Op("LD A,H"); Op("OR L");
-                Op("JP Z," + skip);
+                if (FloatMath.IsFloat(b.R))
+                {
+                    // floating-point condition: any value but 0 counts (test NOT n)
+                    GenFloat(b.R, f);
+                    Calc("NOT");
+                    Call("rt_fpop");
+                    Op("LD A,H"); Op("OR L");
+                    Op("JP NZ," + skip);
+                }
+                else
+                {
+                    GenNum(b.R, f);
+                    Op("LD A,H"); Op("OR L");
+                    Op("JP Z," + skip);
+                }
                 GenAppend(b.L, t, f);
                 Lbl(skip);
                 return;
@@ -838,6 +1085,17 @@ namespace ZX81Compiler
                 Op("LD A,L");
                 Op("LD DE,T_" + t);
                 Call("rt_appchr");
+                return;
+            }
+            if (fn != null && fn.Name == "STR$" && FloatMath.IsFloat(fn.Arg))
+            {
+                // floating point: the ROM makes the text, exactly as the ZX81 prints it
+                GenFloat(fn.Arg, f);
+                Calc("STR$");
+                Call("rt_fstr");       // HL, BC = the text (in the ROM's workspace)
+                Op("LD DE,T_" + t);
+                Call("rt_append");
+                Call("rt_freset");     // give the workspace back
                 return;
             }
             if (fn != null && fn.Name == "STR$")

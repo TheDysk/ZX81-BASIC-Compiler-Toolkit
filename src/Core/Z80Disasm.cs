@@ -56,7 +56,59 @@ namespace ZX81Compiler
             {0x0207,"SLOW_FAST"},{0x02BB,"KEYBOARD"},{0x02E7,"SET_FAST"},{0x07BD,"DECODE"},
             {0x08F5,"PRINT_AT"},{0x0A2A,"CLS"},{0x0F23,"FAST"},{0x0F2B,"SLOW"},{0x0F32,"PAUSE"},
             {0x0F46,"BREAK_1"},{0x0F4B,"DEBOUNCE"},{0x1E00,"CHAR_SET"},
+            {0x02F6,"SAVE"},{0x02FB,"SAVE_NAMED"},{0x0340,"LOAD"},{0x0343,"LOAD_NAMED"},{0x03A8,"NAME"},
+            {0x03C3,"NEW"},{0x07F1,"PRINT_CH"},{0x0851,"LPRINT_CH"},{0x0869,"COPY"},{0x0871,"COPY_BUFF"},
+            {0x0EC5,"TEST_ROOM"},{0x0F55,"SCANNING"},{0x12C3,"STK_STORE"},{0x13F8,"STK_FETCH"},
+            {0x151D,"STACK_A"},{0x1520,"STACK_BC"},{0x158A,"FP_TO_BC"},{0x15CD,"FP_TO_A"},{0x15DB,"PRINT_FP"},
+            {0x199D,"CALCULATE"},
         };
+
+        /// <summary>Names of the ROM calculator's operation codes (the bytes after RST 28h),
+        /// as in the standard ZX81 ROM disassembly.</summary>
+        static readonly string[] CalcNames = {
+            "jump-true","exchange","delete","subtract","multiply","division","to-power","or",
+            "no-&-no","no-l-eql","no-gr-eql","nos-neql","no-grtr","no-less","nos-eql","addition",
+            "str-&-no","str-l-eql","str-gr-eql","strs-neql","str-grtr","str-less","strs-eql","strs-add",
+            "negate","code","val","len","sin","cos","tan","asn","acs","atn","ln","exp","int","sqr","sgn","abs",
+            "peek","usr-no","str$","chrs","not","duplicate","n-mod-m","jump","stk-data","dec-jr-nz",
+            "less-0","greater-0","end-calc","get-argt","truncate","fp-calc-2","e-to-fp" };
+        static readonly string[] CalcConsts = { "stk-zero", "stk-one", "stk-half", "stk-pi/2", "stk-ten" };
+
+        /// <summary>Name of one calculator operation code, e.g. 1Ch -> "sin".</summary>
+        public static string CalcName(int c)
+        {
+            if (c < CalcNames.Length) return CalcNames[c];
+            if (c >= 0xA0 && c <= 0xA4) return CalcConsts[c - 0xA0];
+            if (c >= 0xC0 && c <= 0xC5) return "st-mem-" + (c - 0xC0);
+            if (c >= 0xE0 && c <= 0xE5) return "get-mem-" + (c - 0xE0);
+            if (c >= 0x80 && c <= 0x9F) return "series-" + (c - 0x80);
+            return "?";
+        }
+
+        /// <summary>Comment for the bytes after RST 28h (calculator codes) or RST 08h (an
+        /// error report), starting at a, for count bytes.</summary>
+        public static string CalcComment(byte[] mem, int a, int count)
+        {
+            // which RST is this after? walk back over the calculator bytes
+            int b = a - 1;
+            while (b > 0 && b > a - 300 && mem[b] != 0xEF && mem[b] != 0xCF) b--;
+            if (b == a - 1 && mem[b] == 0xCF)
+            {
+                const string reports = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+                int r = mem[a] + 1;
+                return "error report " + (r < reports.Length ? reports[r].ToString() : "?");
+            }
+            var names = new List<string>();
+            for (int k = a; k < a + count; k++)
+            {
+                int c = mem[k];
+                names.Add(CalcName(c));
+                // codes with an operand byte (relative jumps): name it, skip it
+                if ((c == 0x00 || c == 0x2F || c == 0x31) && k + 1 < a + count) { names.Add("(offset)"); k++; }
+                else if (c == 0x30) { if (k + 1 < a + count) names.Add("(data...)"); break; }
+            }
+            return "calculator: " + string.Join(", ", names);
+        }
 
         /// <summary>System variables 4000h-407Ch, by address (2-byte ones also match address+1 as name+1).</summary>
         public static readonly Dictionary<int, string> SysvarLabels = new Dictionary<int, string>();

@@ -17,6 +17,8 @@ A compiled program looks like this on the ZX81:
 
 Load it in an emulator such as EightyOne, or on a real ZX81 with a 16K RAM pack. By default it starts by itself after loading.
 
+All three tools are at version **V1.00**. Each shows its version in its window title and **Help → About** box. The command-line versions print it with `--version`, and it is stored in each `.exe` file (on Windows: right-click → Properties → Details).
+
 ## Download and run
 
 Build the tools yourself (below), or take the executables from a release. They need .NET Framework 4, which is already part of Windows 10/11.
@@ -38,8 +40,10 @@ All three GUIs accept files dragged onto their windows.
 - Windows GUI with an editor, compile button (F5), and clickable error and warning messages. Listings can be dragged onto the window.
 - Command-line compiler (`zx81c.exe`) for scripting and batch use.
 - ZX81 graphics and inverse characters through simple escapes in the text listing.
+- Every ZX81 BASIC keyword is accepted, including `SIN COS TAN ASN ACS ATN LN EXP PI`, `LPRINT`, `COPY`, `SAVE`, `LOAD` and `NEW`.
 - Compiled programs write straight to the display file, so they are much faster than interpreted BASIC.
-- The machine code (line 0) has no dependencies beyond the ZX81 ROM, which it uses only for keyboard reading and FAST/SLOW.
+- Floating-point maths is done by the ZX81 ROM's own calculator, only where a program needs it (see below). Everything else stays fast 16-bit whole-number code.
+- The machine code (line 0) needs nothing but the ZX81 ROM: keyboard, FAST/SLOW, the calculator, the printer and the tape routines.
 
 ### Using the compiler
 
@@ -49,6 +53,7 @@ Command line:
 
 ```
 zx81c listing.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--asm listing.asm]
+zx81c --version
 ```
 
 | Option | Meaning |
@@ -81,22 +86,54 @@ Special characters inside strings:
 
 ### Supported BASIC
 
-**Statements:** `LET` (optional), `PRINT` (with `;` `,` `AT` `TAB`), `IF … THEN`, `GOTO`, `GOSUB`, `RETURN`, `FOR … TO … STEP`, `NEXT`, `DIM`, `INPUT`, `POKE`, `PLOT`, `UNPLOT`, `SCROLL`, `CLS`, `PAUSE`, `RAND`, `STOP`, `CLEAR`, `RUN`, `FAST`, `SLOW`, `REM`.
+**Statements:** `LET` (optional), `PRINT` (with `;` `,` `AT` `TAB`), `IF … THEN`, `GOTO`, `GOSUB`, `RETURN`, `FOR … TO … STEP`, `NEXT`, `DIM`, `INPUT`, `POKE`, `PLOT`, `UNPLOT`, `SCROLL`, `CLS`, `PAUSE`, `RAND`, `STOP`, `CLEAR`, `RUN`, `FAST`, `SLOW`, `REM`, `LPRINT`, `COPY`, `SAVE`, `LOAD`, `NEW`.
 GOTO and GOSUB can use a calculated line number, e.g. `GOTO 100*N`.
 
-**Functions and operators:** `ABS SGN INT SQR PEEK USR CODE LEN VAL CHR$ STR$ INKEY$ RND`, `NOT AND OR`, `+ - * / **`, and comparisons on numbers and strings. String slicing works: `A$(2)`, `A$(2 TO 5)`, `A$( TO 3)`, `A$(4 TO )`. Numeric arrays can have 1 or 2 dimensions; string arrays work like on the ZX81 (`DIM A$(n,m)`).
+- `LPRINT` (with `;` `,` `AT` `TAB`) and `COPY` print on the ZX printer through the ROM. With no printer attached, the ROM simply carries on.
+- `SAVE "name"` saves the program to tape, as the ZX81 does, and then the program carries on.
+- `LOAD "name"` (or `LOAD ""`) loads another program. That program then runs if it auto-runs, as on the ZX81.
+- `NEW` wipes the program, as on the ZX81.
+- `LIST`, `LLIST` and `CONT` are accepted but do nothing, with a warning. A compiled program has no BASIC to list (the only BASIC in memory is the machine code line), and nothing stopped to continue.
+
+**Functions and operators:** `ABS SGN INT SQR PEEK USR CODE LEN VAL CHR$ STR$ INKEY$ RND PI SIN COS TAN ASN ACS ATN LN EXP`, `NOT AND OR`, `+ - * / **`, and comparisons on numbers and strings. String slicing works: `A$(2)`, `A$(2 TO 5)`, `A$( TO 3)`, `A$(4 TO )`. Numeric arrays can have 1 or 2 dimensions; string arrays work like on the ZX81 (`DIM A$(n,m)`).
+
+### Whole numbers and floating point ("float islands")
+
+Numbers are normally 16-bit whole numbers (−32768 to 32767), which is what makes compiled programs fast.
+
+An expression is worked out in **floating point** instead when it uses any of these:
+
+- `SIN COS TAN ASN ACS ATN LN EXP SQR PI VAL`;
+- `RND` on its own;
+- a number with a decimal point, such as `0.5` or `1.0`, or one too big for 16 bits.
+
+The ZX81 ROM's own calculator does the work, so the results are exactly what a ZX81 gives:
+
+```basic
+10 FOR A=0 TO 359 STEP 10
+20 PLOT 32+20*COS (A*PI/180),22+20*SIN (A*PI/180)
+30 NEXT A
+40 PRINT SIN 1;" ";SQR 2;" ";7/2*1.0
+```
+
+Line 40 prints `0.84147099 1.4142136 3.5`, as on a ZX81.
+
+- Where a floating-point result has to become a number, it is **rounded** to the nearest whole number, as the ZX81 does when it needs one. That covers storing it in a variable, `PLOT`, `AT`, a subscript, `POKE` and so on.
+- `PRINT`, `LPRINT` and `STR$` show the full value.
+- Comparisons and `IF` conditions use the full value, so `IF SIN X>0.5` works, and `IF 0.3 THEN` counts as true.
+- **Variables hold whole numbers**, so `LET A=H*PI/6` stores 1, not 0.5236. The compiler warns when this happens. Keep the angle inside the expression instead, e.g. `COS (H*PI/6)`. [examples/clock.txt](examples/clock.txt) does this.
+- Floating point runs at the speed of the ZX81's own maths, which is slow, so keep it out of the busiest loops.
+- A maths error such as `SQR -1` or `LN 0` stops the program with the ZX81 report code (`A/10`: the program runs from line 10).
+- `VAL` works out any expression in its string, e.g. `VAL "2*3.5"` is 7. It can't see the program's variables, because those are kept outside BASIC.
 
 #### Differences from ZX81 BASIC
 
-This is an integer compiler:
-
-- **Numbers:** whole numbers from −32768 to 32767, so `7/2` is `3`. `SIN COS TAN ASN ACS ATN LN EXP PI` are not available.
-- **RND:** must be written as `RND*n`, which gives a whole number from 0 to n−1. `INT (RND*6)+1` works as expected.
+- **Whole-number maths:** outside floating point, division truncates (`7/2` is 3, `-7/2` is −3) and `2**-1` is 0. Write `7/2.0` to get 3.5.
+- **Variables** hold whole numbers (see above). They start at 0 instead of giving "variable not found". Ordinary string variables hold up to 255 characters.
+- **RND:** `RND*n` gives a fast whole number from 0 to n−1, so `INT (RND*6)+1` works as expected. `RND` on its own gives a fraction (0 to 0.99998).
 - **DIM:** sizes must be constant numbers. Arrays are not bounds checked.
-- **Variables:** start at 0 instead of giving "variable not found". Ordinary string variables hold up to 255 characters.
 - **Screen:** printing below line 21 scrolls instead of stopping with error 5.
-- **Statements per line:** one, as on the ZX81. `LPRINT LLIST COPY LIST SAVE LOAD CONT` are ignored with a warning.
-- **VAL:** only converts plain whole numbers.
+- **Statements per line:** one, as on the ZX81.
 
 Compiled programs run much faster, so games often need extra `PAUSE` lines to stay playable.
 
@@ -105,9 +142,9 @@ Compiled programs run much faster, so games often need extra `PAUSE` lines to st
 The decompiler takes any `.p` file and turns it back into text you can read, edit and reload.
 
 - **BASIC listing:** every line is written out with the same escapes the compiler uses (`\hh`, `\'.`, `%A`, see above), and checked byte by byte. Lines that can't be written as normal text, such as machine code hidden in a `REM`, are written entirely as `\hh` escapes, so the listing turns back into an identical program. In this listing `\hh` may appear anywhere in a line, not only inside strings. Lines starting with `#` are comments (the decompiler puts its notes and the saved variables there).
-- The listing is ZX81 BASIC, so it runs as normal interpreted BASIC once turned back into a `.p`. Feeding it to the compiler only works for programs that keep to the compiler's integer BASIC.
-- **Machine code:** it finds machine code wherever it is: in line 0, in any `REM` line, split across several lines, or elsewhere in RAM (for example in the variables area or past the end of the program). It starts from every `USR` call it can work out, including `USR 16514`, `USR VAL "16514"`, `USR (PEEK 16396+256*PEEK 16397)` and variables saved with the program, then follows jumps and calls. The result is an `.asm` listing with labels, ROM and system-variable names, and `DB` lines for data. It reassembles to the same bytes.
-- **Programs made by the compiler:** these are recognised, and the original BASIC is rebuilt from the machine code (with the original line numbers when the program used computed GOTO/GOSUB). The rebuilt BASIC is recompiled and compared with the file, and the report says whether the result is identical.
+- The listing is ZX81 BASIC, so it runs as normal interpreted BASIC once turned back into a `.p`. It can also be fed to the compiler, which accepts every ZX81 keyword, but programs that rely on variables holding fractions will behave differently when compiled (see above).
+- **Machine code:** it finds machine code wherever it is: in line 0, in any `REM` line, split across several lines, or elsewhere in RAM (for example in the variables area or past the end of the program). It starts from every `USR` call it can work out, including `USR 16514`, `USR VAL "16514"`, `USR (PEEK 16396+256*PEEK 16397)` and variables saved with the program, then follows jumps and calls. The result is an `.asm` listing with labels, ROM and system-variable names, and `DB` lines for data. The bytes after `RST 28h` (the ROM calculator) are named, e.g. `DB 1Ch,34h ; calculator: sin, end-calc`, and so are the report codes after `RST 08h`. The listing reassembles to the same bytes.
+- **Programs made by the compiler:** these are recognised, and the original BASIC is rebuilt from the machine code (with the original line numbers when the program used computed GOTO/GOSUB). Everything the compiler produces is understood, including floating point, `LPRINT`, `COPY`, `SAVE`, `LOAD` and `NEW`. The rebuilt BASIC is recompiled and compared with the file, and the report says whether the result is identical.
 - **New `.p` file:** made from the listing, or from the rebuilt BASIC. The original screen and saved variables can be kept.
 
 ### Using the decompiler
@@ -127,6 +164,7 @@ Command line:
 
 ```
 zx81dc program.p [--txt file] [--basic file] [--asm file] [--p file] [--p-from listing|basic] [--report]
+zx81dc --version
 ```
 
 With no options it writes `program.txt`, plus `program.bas` if the BASIC could be rebuilt and `program.asm` if there is machine code.
@@ -156,7 +194,7 @@ Open a `.p` file (Ctrl+O, or drag it onto the window). The tabs:
 - **Listing:** the BASIC with ZX81 characters translated: keywords, inverse video (shown highlighted) and block graphics as Unicode. The hidden 5-byte numbers that follow every number in a line are hidden by default; a tick box shows them as `{=value}` and marks with `!` any that differ from the digits shown, a common trick. Machine code in `REM` lines is shown as Z80 instructions.
 - **Screen:** the display file drawn as the ZX81 would show it (32×24), at a choice of sizes. Collapsed 1K display files are handled. Save it as a picture or as text.
 - **Variables:** every variable saved with the program, decoded: numbers, strings, arrays and FOR loops (with their limit, step and loop line).
-- **Hex / Z80:** a hex editor and a Z80 disassembly side by side, kept in step. Traced machine code is shown in green. ROM routines and system variables are labelled. Go to any address, edit bytes (double-click a row), then **Save .p as**.
+- **Hex / Z80:** a hex editor and a Z80 disassembly side by side, kept in step. Traced machine code is shown in green. ROM routines and system variables are labelled, and the bytes after `RST 28h` and `RST 08h` are explained (calculator operations, error reports). Go to any address, edit bytes (double-click a row), then **Save .p as**.
 - **Graphics:** shows any part of memory as 8×8 tiles, to find and rip character sets and user-defined graphics as used by hi-res and custom-font programs. Likely character sets are found automatically. Save as `.png`, `.bin` or `.asm` (`DB` lines).
 
 The **Export** menu has:
@@ -186,8 +224,9 @@ Output goes to `build/`: all five executables.
 
 - Numeric expressions are evaluated in HL as 16-bit integers. Strings are address/length pairs, with temporary buffers for joined strings.
 - A runtime library written in Z80 assembly handles printing, strings, maths, PLOT, INPUT and so on. Only the routines a program uses are included.
-- Variables are not stored in the `.p` file. They live in free RAM above the BASIC edit line and are cleared when the program starts. This keeps the file small, so it loads quickly from tape.
-- The code never uses IX, IY or the alternate registers, so it runs safely in SLOW mode with the display on.
+- Variables are not stored in the `.p` file. They live in free RAM above the BASIC edit line and are cleared when the program starts. This keeps the file small, so it loads quickly from tape. Programs that use the ROM calculator leave 768 bytes more room before the variables for the calculator stack and the ROM's workspace.
+- Floating-point parts of expressions ("float islands") put their values on the ROM calculator's stack and call the calculator (`RST 28h`) for each operation. The result is rounded back into HL, or turned into text by the ROM's `STR$`. The rest of the program never touches the calculator.
+- The compiler's own code never uses IX, IY or the alternate registers, so it runs safely in SLOW mode with the display on. The ROM's calculator, printer and tape routines are the ROM's own and are safe too.
 
 ### Decompiler and browser
 
@@ -202,7 +241,7 @@ Output goes to `build/`: all five executables.
 
 `tests/` has test listings, a Python harness and C# test drivers. `tests/run_tests.sh` rebuilds everything and then:
 
-- runs compiled programs on a Z80 emulator and prints the ZX81 screen as text;
+- runs compiled programs on a Z80 emulator and prints the ZX81 screen as text. Programs with known results are checked against `tests/expected`: screen, printer output, and tape/NEW/error events;
 - cross-checks the assembler against an independent disassembler;
 - decompiles every compiled test program, checks that the rebuilt BASIC recompiles to identical code, and checks that each listing turns back into an identical `.p` file;
 - makes a `.wav` and a `.tzx` and decodes them again.
@@ -214,7 +253,9 @@ tests/run_tests.sh ~/zx81files         # also round-trip a folder of your own .p
 python3 tests/run81.py tests/t2.p      # show the screen of a test program
 ```
 
-The harness uses a stub ROM. Loading a `.p` file and real ROM behaviour should also be checked in a real emulator such as EightyOne.
+The floating-point, `VAL`, printer and tape tests need the real **ZX81 ROM**, which isn't included in this repository because it is copyright. Copy the 8K `zx81.rom` (for example from the EightyOne emulator) to `tests/zx81.rom`, or set `ZX81_ROM=path`. Without it, `run_tests.sh` still compiles and decompiles those programs but doesn't run them. Whole-number programs also run on a small built-in stub ROM (`--stub`).
+
+The harness doesn't emulate the display hardware or real tape and printer signals. It catches the ROM's printer, SAVE, LOAD and NEW entry points and reports them instead. Loading a `.p` file, and the printer and tape on real hardware, should also be checked in a real emulator such as EightyOne.
 
 ## Project layout
 
@@ -225,8 +266,8 @@ src/Compiler/    compiler GUI and command line
 src/Decompiler/  decompiler GUI and command line
 src/Browser/     .P File Browser
 src/UI/          shared Windows Forms helpers and ZX81 screen/graphics drawing
-tests/           test listings, emulator harness, test drivers
-examples/        fortress.txt (small game), feature_test.txt
+tests/           test listings, emulator harness, test drivers, expected results
+examples/        fortress.txt (small game), clock.txt (floating point), feature_test.txt
 build.sh         build with Mono
 build.bat        build on Windows
 LICENSE          MIT licence

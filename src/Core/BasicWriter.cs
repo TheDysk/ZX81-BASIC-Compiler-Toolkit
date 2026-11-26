@@ -52,7 +52,9 @@ namespace ZX81Compiler
             var u = e as Unary;
             if (u != null) return u.Op == "NOT" ? 4 : 9;
             var n = e as NumLit;
-            if (n != null && !(n is NumLitU) && n.Value > 32767) return 9;   // printed with a minus sign
+            if (n != null && !(n is NumLitU) && !n.Unsigned && n.Value > 32767) return 9;   // printed with a minus sign
+            var fl = e as FloatLit;
+            if (fl != null && fl.Value < 0) return 9;
             return 12;
         }
 
@@ -68,7 +70,17 @@ namespace ZX81Compiler
         static string Raw(Expr e)
         {
             if (e is AddrRef) return LineOf(((AddrRef)e).Addr).ToString();
-            if (e is NumLitU) return ((NumLit)e).Value.ToString();
+            if (e is NumLitU || (e is NumLit && ((NumLit)e).Unsigned)) return ((NumLit)e).Value.ToString();
+            if (e is FloatLit)
+            {
+                // the shortest text that gives the same 5 bytes; a whole number that fits
+                // a whole-number constant gets ".0" so it is read back as floating point
+                var fl = (FloatLit)e;
+                if (fl.Value == Math.Floor(fl.Value) && fl.Value >= -32768 && fl.Value <= 65535)
+                    return ((long)fl.Value).ToString() + ".0";
+                return ZxFloat.ShortText(fl.Bytes);
+            }
+            if (e is PiConst) return "PI";
             if (e is NumLit) { int v = ((NumLit)e).Value; return v > 32767 ? "-" + (65536 - v) : v.ToString(); }
             if (e is NumVar) return ((NumVar)e).Name;
             if (e is NumArr)
@@ -156,7 +168,7 @@ namespace ZX81Compiler
             if (s is PrintStmt)
             {
                 var p = (PrintStmt)s;
-                var sb = new StringBuilder("PRINT");
+                var sb = new StringBuilder(p.Printer ? "LPRINT" : "PRINT");
                 bool needSep = false, first = true;
                 foreach (var it in p.Items)
                 {
@@ -195,6 +207,7 @@ namespace ZX81Compiler
             if (s is PauseStmt) return "PAUSE " + Expr(((PauseStmt)s).N);
             if (s is RandStmt) { var r = (RandStmt)s; return r.N == null ? "RAND" : "RAND " + Expr(r.N); }
             if (s is RunStmt) { var r = (RunStmt)s; return r.N == null ? "RUN" : "RUN " + Expr(r.N); }
+            if (s is TapeStmt) { var t = (TapeStmt)s; return (t.Load ? "LOAD " : "SAVE ") + Expr(t.Name); }
             if (s is SimpleStmt) { var k = ((SimpleStmt)s).Kind; return k == "NOP" ? "REM" : k; }
             return "REM ?";
         }

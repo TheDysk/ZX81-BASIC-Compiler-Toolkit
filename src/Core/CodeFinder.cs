@@ -319,7 +319,7 @@ namespace ZX81Compiler
                     do { db.Add(Z80Disasm.Hex(p.Mem[a], 2)); a++; }
                     while (a < blk[1] && db.Count < 8 && !ca.InstrStarts.Contains(a) && !ca.Labels.Contains(a));
                     body.Append("        DB ").Append(string.Join(",", db).PadRight(22)).Append("; ").Append(st.ToString("X4"));
-                    if (ca.CalcBytes[st]) body.Append("  calculator / data");
+                    if (ca.CalcBytes[st]) body.Append("  " + Z80Disasm.CalcComment(p.Mem, st, a - st));
                     body.AppendLine();
                 }
             }

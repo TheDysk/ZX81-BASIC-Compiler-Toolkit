@@ -29,6 +29,11 @@
 //
 //  The parser also checks types (number vs string) and reports errors as CompileError
 //  exceptions, which Compiler.cs catches and turns into messages.
+//
+//  Numbers: whole numbers -32768..65535 become NumLit; anything else (0.5, 1.0, 1E6)
+//  becomes FloatLit, which makes the expression around it floating point (see
+//  FloatMath in Ast.cs). Fold works out constant parts at compile time, in whole
+//  numbers or floating point to match how the code would do it.
 // =====================================================================================
 using System;
 using System.Collections.Generic;
@@ -394,22 +399,26 @@ namespace ZX81Compiler
                 case "FAST":
                 case "SLOW":
                     return new SimpleStmt(k.Text);
-                case "NEW":
-                    Warnings.Add("NEW is treated as STOP");
-                    return new SimpleStmt("STOP");
-                // Statements that make no sense in a compiled program: skip the rest of the line
-                case "LIST":
-                case "LLIST":
-                case "COPY":
-                case "CONT":
+                case "COPY":    // copy the screen to the ZX printer (ROM routine)
+                case "NEW":     // wipe the program, as on the ZX81 (ROM routine)
+                    return new SimpleStmt(k.Text);
+                case "LPRINT":
+                    {
+                        var lp = (PrintStmt)ParsePrint();
+                        lp.Printer = true;
+                        return lp;
+                    }
                 case "SAVE":
                 case "LOAD":
-                    Warnings.Add(k.Text + " is not supported in compiled code and has been ignored");
-                    while (Peek.Kind != TK.End) p++;
+                    return new TapeStmt { Name = Str(ParseExpr()), Load = k.Text == "LOAD" };
+                // Statements with nothing to do in a compiled program
+                case "LIST":
+                case "LLIST":
+                    if (Peek.Kind != TK.End) Num(ParseExpr());
+                    Warnings.Add(k.Text + " does nothing in a compiled program: the only BASIC in memory is the machine code line, so there is nothing to list");
                     return new SimpleStmt("NOP");
-                case "LPRINT":
-                    Warnings.Add("LPRINT is not supported (no printer) and has been ignored");
-                    while (Peek.Kind != TK.End) p++;
+                case "CONT":
+                    Warnings.Add("CONT does nothing inside a compiled program (it continues a stopped BASIC program, typed as a command)");
                     return new SimpleStmt("NOP");
             }
             throw Err(k.Text + " cannot start a statement");
@@ -647,18 +656,12 @@ namespace ZX81Compiler
             switch (k.Kind)
             {
                 case TK.Num:
-                    {
-                        // Numbers become 16-bit integers: fractions are rounded down (with a
-                        // warning), and values are stored as their 16-bit pattern (0..65535).
-                        double v = k.Num;
-                        if (v != Math.Floor(v))
-                            Warnings.Add("number " + k.Text + " is not a whole number; compiled programs use integers so it becomes " + (int)Math.Floor(v));
-                        v = Math.Floor(v);
-                        if (v > 65535 || v < -32768) { Warnings.Add("number " + k.Text + " is too big for 16 bits"); }
-                        int iv = (int)(long)v;
-                        if (v > 65535) iv = 65535;
-                        return Mk(new NumLit(iv & 0xFFFF));
-                    }
+                    // Whole numbers -32768..65535 are NumLits; anything else (0.5, 1E6 ...)
+                    // is a FloatLit, which makes the expression around it floating point.
+                    // A number written with a decimal point (1.0) is a FloatLit too, so
+                    // 7/2*1.0 is 3.5, as on the ZX81.
+                    if (k.Text.IndexOf('.') >= 0) return Mk(new FloatLit(k.Num));
+                    return Mk(FloatMath.Const(k.Num));
                 case TK.Str:
                     return Mk(new StrLit(k.Str));
                 case TK.Ident:
@@ -700,7 +703,7 @@ namespace ZX81Compiler
                     {
                         case "RND": return Mk(new RndBare());
                         case "INKEY$": return Mk(new Inkey());
-                        case "PI": throw Err("PI needs floating point maths, which compiled (integer) programs don't support");
+                        case "PI": return Mk(new PiConst());
                         // number -> number
                         case "ABS":
                         case "SGN":
@@ -720,6 +723,7 @@ namespace ZX81Compiler
                             return Mk(new Func(k.Text, Str(ParsePrimary()), VT.Num));
                         case "NOT":
                             return Mk(new Unary("NOT", Num(ParseNot())));
+                        // number -> number, worked out by the ROM's floating-point calculator
                         case "SIN":
                         case "COS":
                         case "TAN":
@@ -728,7 +732,7 @@ namespace ZX81Compiler
                         case "ATN":
                         case "LN":
                         case "EXP":
-                            throw Err(k.Text + " needs floating point maths, which compiled (integer) programs don't support");
+                            return Mk(new Func(k.Text, Num(ParseFuncArg()), VT.Num));
                     }
                     break;
             }
@@ -737,49 +741,93 @@ namespace ZX81Compiler
 
         // ---------------- constant folding ----------------
         /// <summary>Work out at compile time any part of an expression that only uses
-        /// constants, e.g. 2*16+1 becomes 33. Uses signed 16-bit arithmetic like the
-        /// compiled code. Division by zero is left alone (so it happens at run time).</summary>
-        public static Expr Fold(Expr e)
+        /// constants, e.g. 2*16+1 becomes 33. Whole-number parts use signed 16-bit
+        /// arithmetic like the compiled code (so 7/2 is 3); parts inside a float island
+        /// (see FloatMath) use floating point like the ZX81 (so SIN (7/2) is SIN 3.5).
+        /// Division by zero is left alone (so it happens at run time).</summary>
+        public static Expr Fold(Expr e) { return Fold(e, false); }
+
+        static bool IsConst(Expr e) { return e is NumLit || e is FloatLit; }
+
+        /// <summary>Fold e; fl = e is inside a float island.</summary>
+        static Expr Fold(Expr e, bool fl)
         {
+            bool here = fl || FloatMath.IsFloat(e);    // is this node worked out in floating point?
             var b = e as Binary;
             if (b != null)
             {
-                b.L = Fold(b.L); b.R = Fold(b.R);
+                bool numeric = b.L.Type == VT.Num && Array.IndexOf(FloatMath.PassOps, b.Op) >= 0;
+                b.L = Fold(b.L, numeric && here);
+                b.R = Fold(b.R, numeric && here);
+                if (!numeric || !IsConst(b.L) || !IsConst(b.R)) return e;
                 var l = b.L as NumLit; var r = b.R as NumLit;
-                if (l != null && r != null)
+                bool useFloat = here || l == null || r == null || l.Unsigned || r.Unsigned;
+                if (useFloat)
                 {
-                    int x = (short)l.Value, y = (short)r.Value, v;   // (short) gives the signed value
+                    // floating point, as the ZX81 would
+                    double x = FloatMath.Value(b.L), y = FloatMath.Value(b.R), fv;
                     switch (b.Op)
                     {
-                        case "+": v = x + y; break;
-                        case "-": v = x - y; break;
-                        case "*": v = x * y; break;
-                        case "/": if (y == 0) return e; v = x / y; break;
-                        case "=": v = x == y ? 1 : 0; break;
-                        case "<>": v = x != y ? 1 : 0; break;
-                        case "<": v = x < y ? 1 : 0; break;
-                        case ">": v = x > y ? 1 : 0; break;
-                        case "<=": v = x <= y ? 1 : 0; break;
-                        case ">=": v = x >= y ? 1 : 0; break;
+                        case "+": fv = x + y; break;
+                        case "-": fv = x - y; break;
+                        case "*": fv = x * y; break;
+                        case "/": if (y == 0) return e; fv = x / y; break;
+                        case "=": fv = x == y ? 1 : 0; break;
+                        case "<>": fv = x != y ? 1 : 0; break;
+                        case "<": fv = x < y ? 1 : 0; break;
+                        case ">": fv = x > y ? 1 : 0; break;
+                        case "<=": fv = x <= y ? 1 : 0; break;
+                        case ">=": fv = x >= y ? 1 : 0; break;
                         default: return e;
                     }
-                    var n = new NumLit(v & 0xFFFF); n.Line = e.Line; return n;
+                    if (double.IsInfinity(fv) || double.IsNaN(fv) || Math.Abs(fv) > 1e38) return e;   // leave it for the ROM to report
+                    var c = FloatMath.Const(fv); c.Line = e.Line; return c;
                 }
-                return e;
+                int xi = (short)l.Value, yi = (short)r.Value, v;   // (short) gives the signed value
+                switch (b.Op)
+                {
+                    case "+": v = xi + yi; break;
+                    case "-": v = xi - yi; break;
+                    case "*": v = xi * yi; break;
+                    case "/": if (yi == 0) return e; v = xi / yi; break;
+                    case "=": v = xi == yi ? 1 : 0; break;
+                    case "<>": v = xi != yi ? 1 : 0; break;
+                    case "<": v = xi < yi ? 1 : 0; break;
+                    case ">": v = xi > yi ? 1 : 0; break;
+                    case "<=": v = xi <= yi ? 1 : 0; break;
+                    case ">=": v = xi >= yi ? 1 : 0; break;
+                    default: return e;
+                }
+                var n = new NumLit(v & 0xFFFF); n.Line = e.Line; return n;
             }
             var u = e as Unary;
             if (u != null)
             {
-                u.A = Fold(u.A);
+                u.A = Fold(u.A, here);
+                if (!IsConst(u.A)) return e;
                 var a = u.A as NumLit;
-                if (a != null)
-                {
-                    int v = u.Op == "NEG" ? -(short)a.Value : (a.Value == 0 ? 1 : 0);
-                    var n = new NumLit(v & 0xFFFF); n.Line = e.Line; return n;
-                }
+                Expr res;
+                if (u.Op == "NEG")
+                    res = (here || a == null || a.Unsigned) ? FloatMath.Const(-FloatMath.Value(u.A)) : new NumLit(-(short)a.Value & 0xFFFF);
+                else
+                    res = new NumLit(FloatMath.Value(u.A) == 0 ? 1 : 0);
+                res.Line = e.Line;
+                return res;
             }
             var f = e as Func;
-            if (f != null && f.Arg != null) f.Arg = Fold(f.Arg);
+            if (f != null && f.Arg != null)
+            {
+                // SIN etc. work on a float argument; ABS SGN INT SQR follow their context;
+                // everything else (PEEK, CHR$ ...) wants a whole number
+                bool argFloat = Array.IndexOf(FloatMath.FloatFuncs, f.Name) >= 0 ? f.Name != "VAL"
+                              : Array.IndexOf(FloatMath.PassFuncs, f.Name) >= 0 && here;
+                f.Arg = Fold(f.Arg, argFloat);
+                // INT of a whole-number constant, in whole-number code: just the constant
+                // (INT makes no code there, so 39+56 and INT 39+56 must fold alike)
+                if (f.Name == "INT" && !here && f.Arg is NumLit) return f.Arg;
+            }
+            var rn = e as RndN;
+            if (rn != null) rn.N = Fold(rn.N, here);
             return e;
         }
     }
