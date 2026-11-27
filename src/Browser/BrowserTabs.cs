@@ -1,5 +1,5 @@
 // =====================================================================================
-//  BrowserTabs.cs - building and filling the tabs of the .P File Browser
+//  BrowserTabs.cs - building and filling the tabs of the .P Toolkit
 // -------------------------------------------------------------------------------------
 //  Each tab has a Build...() method (creates its controls, called once) and a
 //  Fill...() method (shows the current file, called after opening or editing).
@@ -632,7 +632,7 @@ namespace ZX81Compiler
                 int keepRow = lvHex.SelectedIndices.Count > 0 ? lvHex.SelectedIndices[0] : 0;
                 LoadInto(PFile.Load(data));
                 edited = true;
-                Text = ".P File Browser " + Versions.Show(Versions.Browser) + " - " + Path.GetFileName(path) + " (edited)";
+                Text = ".P Toolkit " + Versions.Show(Versions.Browser) + " - " + Path.GetFileName(path) + " (edited)";
                 status.Text = parts.Length + " byte(s) changed at " + a0.ToString("X4") + "h. Use Save .p as... to keep the changes.";
                 tabs.SelectedIndex = 4;
                 if (keepRow < HexRows) { lvHex.SelectedIndices.Add(keepRow); lvHex.EnsureVisible(keepRow); }

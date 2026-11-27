@@ -1,7 +1,7 @@
 // =====================================================================================
 //  TapeFormats.cs - opening any supported file as a ZX81 program
 // -------------------------------------------------------------------------------------
-//  One place that knows every input format, used by the Browser and the Decompiler:
+//  One place that knows every input format, used by the .P Toolkit and the Decompiler:
 //     .p .81       the ZX81 program itself
 //     .p81         name + program (the first program is used if there are several)
 //     .o .80       a ZX80 program, converted to ZX81 BASIC (see Zx80.cs)

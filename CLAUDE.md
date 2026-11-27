@@ -4,7 +4,7 @@ Guidance for working on this repository: a toolset for Sinclair ZX81 `.p` files.
 
 - **Compiler** (`zx81c.exe`, `ZX81BasicCompiler.exe`): ZX81 BASIC text listing → Z80 machine code inside a `.p` file (`0 REM <code>`, `10 RAND USR 16514`).
 - **Decompiler** (`zx81dc.exe`, `ZX81Decompiler.exe`): `.p` → exact BASIC text listing, `.asm` of any machine code, a new `.p`; for programs made by our compiler, the original BASIC rebuilt from the machine code.
-- **.P File Browser** (`ZX81PBrowser.exe`): inspector/hex editor/exporter for `.p` files.
+- **.P Toolkit** (`ZX81PToolkit.exe`): inspector/hex editor/exporter for `.p` files.
 
 All five programs share `src/Core`. The three GUIs also share `src/UI`.
 
@@ -29,7 +29,7 @@ Test tooling needs `python3` and `pip install z80` (a Z80 emulator with a disass
 - `tests/cs/ToolTest.cs` (built and run by `run_tests.sh`) checks for each `.p` given that listing → `.p` is identical, and for programs made by our compiler that the rebuilt BASIC is verified. `ToolTest.exe --tape f.p` writes `/tmp/zx81test.wav`/`.tzx`, and `tests/tapecheck.py f.p wav tzx TEST` decodes both and compares them with name + file. `tests/cs/CoreTest.cs` is an older round-trip driver that prints per-file details.
 - `tests/cs/TapeTest.cs` (built and run by `run_tests.sh` as `/tmp/tapetest.exe f.p …`) round-trips each file through `.wav` (several sample formats, quiet/noisy/fast/inverted), `.tzx`, `.p81`, damages recordings and checks the `[mm:ss.ms]` of each error, tests the ZX80 conversion both ways, `HiddenNumberOffsets` and `InjectRem`. `tapetest.exe --write-tapes DIR f.p …` just writes the tape files (and a small ZX80 `.o`) for the `zx81dc --extract` checks. Emulator launching is tested with a stand-in shell script set up through `ZX81TOOLSET_INI`.
 - `.asm` from the decompiler should reassemble to identical bytes; check with `pasmo` (`apt install pasmo`, then `pasmo --bin out.asm out.bin` and compare with the bytes at the ORG address).
-- GUIs can be smoke-tested on Linux with `xvfb-run mono build/ZX81PBrowser.exe file.p` plus `xdotool`/ImageMagick `import` for screenshots. Mono's WinForms isn't Windows, so layouts should still be checked on Windows.
+- GUIs can be smoke-tested on Linux with `xvfb-run mono build/ZX81PToolkit.exe file.p` plus `xdotool`/ImageMagick `import` for screenshots. Mono's WinForms isn't Windows, so layouts should still be checked on Windows.
 - Known: one sample file (`frogging-normalized…p`) doesn't round-trip because its VARS pointer is outside the file. Damaged files like that are reported, not fixed.
 
 - 32K/64K: the emulator's memory is a flat 64K of RAM, so programs compiled for 32K/64K just run. `--ramtop C000` sets RAMTOP and the stack as after raising RAMTOP. `--hw16` / `--hw32` single-step the first 20000 instructions and fix memory up after each one to look like a plain 16K ZX81 (8000h-BFFFh = ROM, C000h-FFFFh = 4000h-7FFFh) or a 32K pack (C000h-FFFFh = 4000h-7FFFh): enough for the start-up RAM check. (The emulator's write marks fire too late to emulate this per access.) `tests/mkbig.py` builds large BASIC `.p` files from a small one (big saved arrays, optional code inside them, a bigger first line to push the display file above 8000h); `ToolTest.exe --mkp listing.txt out.p` makes the small one.
@@ -60,8 +60,8 @@ Test tooling needs `python3` and `pip install z80` (a Z80 emulator with a disass
 | `src/Core/` | Everything that isn't UI | all five exes |
 | `src/Compiler/` | `Cli.cs` (`CliMain`, `ReadListing`), `MainForm.cs` (`Program`, compiler GUI) | zx81c, ZX81BasicCompiler |
 | `src/Decompiler/` | `DecompilerCli.cs`, `DecompilerForm.cs` (`DecompilerProgram`) | zx81dc, ZX81Decompiler |
-| `src/Browser/` | `BrowserForm.cs` (`BrowserProgram`, menus, opening, exports), `BrowserTabs.cs` (partial class: the tabs, `MemoryMapPanel`, `Rtf` builder), `BrowserExtras.cs` (partial class: Run in Emulator, Play Audio, `.p81`/`.o` export, hidden-number editor, Inject Binary into REM) | ZX81PBrowser |
-| `src/UI/` | `UiCommon.cs` (fonts, save dialogs, drag-and-drop, `OpenProgram` = open any format and show tape errors with their `[mm:ss.ms]`, `AboutText`), `ZxRender.cs` (screen/tile bitmaps, ZX81 ROM font, char-set finder), `EmulatorDialog.cs` (`EmulatorUi.Configure`, `EmulatorUi.Run`) | the three GUIs |
+| `src/Browser/` | `BrowserForm.cs` (`BrowserProgram`, menus, opening, exports), `BrowserTabs.cs` (partial class: the tabs, `MemoryMapPanel`, `Rtf` builder), `BrowserExtras.cs` (partial class: Run in Emulator, Play Audio, `.p81`/`.o` export, hidden-number editor, Inject Binary into REM) | ZX81PToolkit |
+| `src/UI/` | `UiCommon.cs` (fonts, `ShowHelp` = the Help > How it works window: each line of the help text is a paragraph that wraps to the window, with `# heading`, `- bullet`, `term :: meaning` and 4-space indented examples, rendered as RTF; save dialogs, drag-and-drop, `OpenProgram` = open any format and show tape errors with their `[mm:ss.ms]`, `AboutText`), `ZxRender.cs` (screen/tile bitmaps, ZX81 ROM font, char-set finder), `EmulatorDialog.cs` (`EmulatorUi.Configure`, `EmulatorUi.Run`) | the three GUIs |
 
 Each exe has its own `Main`, selected with `-main:` in `build.sh`/`build.bat`. If you add a source file to a folder, both build scripts pick it up (they compile `src/Core/*.cs` etc.), but check `build.bat` lists any new folder.
 
@@ -161,7 +161,7 @@ E_LINE+256  "BSS": all variables, created at run time, NOT stored in the .p
 - **SAVE/LOAD** (`TapeStmt`): `rt_tname` copies the name into the ROM workspace (BC-SPACES) with the last character inverse and calls SET-FAST; SAVE then calls 02FBh (just after the ROM's NAME, which would parse BASIC text) and returns; LOAD resets SP to ENTRYSP and jumps to 0343h with carry set for `LOAD ""`, so when the ROM's LOAD returns it lands in the ROM's USR handler and BASIC carries on with the loaded program.
 - **LIST, LLIST, CONT:** accepted, do nothing, warning (no BASIC to list / nothing to continue).
 
-## Decompiler and browser internals (src/Core)
+## Decompiler and .P Toolkit internals (src/Core)
 
 | File | Role |
 |---|---|
@@ -179,7 +179,7 @@ E_LINE+256  "BSS": all variables, created at run time, NOT stored in the .p
 | `ToolConfig.cs` | Emulator settings in `ZX81Toolset.ini` (`[Emulator] Path=`, `Arguments=` with `{file}`), next to the exes or in %APPDATA%\ZX81Toolset; `ZX81TOOLSET_INI` overrides (the tests use it). `RunInEmulator` throws `InvalidOperationException` with a message for the user; `TempP` writes a temporary `.p` for unsaved programs. |
 | `Tape.cs` | `.wav` (44.1 kHz 16-bit; bit 0 = 4 pulses, bit 1 = 9 pulses, 150 µs high/150 µs low, 1300 µs gap) and `.tzx` (block 30h text, 20h pause, 19h generalised data with the same pulse symbols). Tape data is the program name in ZX81 codes, last char ORed with 80h, then the `.p` bytes. |
 
-### Exact listing format (decompiler output, browser export)
+### Exact listing format (decompiler output, .P Toolkit export)
 
 - Same escapes as the compiler (`\hh`, `\'.`-style block graphics, `%X` inverse, `""` inside a string = the `""` token C0h), but `\hh` is allowed anywhere in a line.
 - Lines starting with `#` (or `;`/`//`) are comments. Line numbers 0–16383, kept in file order (programs may have duplicate or out-of-order numbers, and these must survive).
@@ -201,7 +201,10 @@ Fuzzing is the best check after changing CodeGen or Recover: generate random pro
 
 **Coupling rule:** `Recover.cs` reads the exact instruction patterns that `CodeGen.cs` writes. If you change code generation, run `tests/run_tests.sh`: the decompiler section must still say "BASIC rebuilt+verified" for every test program. If it doesn't, update the matching pattern handler in `Recover.cs`.
 
-### Browser notes
+### .P Toolkit notes
+
+The .P Toolkit was called the .P File Browser; the code still uses that name (`src/Browser/`, `BrowserForm`, `BrowserProgram`, `Versions.Browser`). Only what the user sees, and the exe name `ZX81PToolkit.exe`, changed.
+
 
 - `BrowserForm` is a partial class split over the two files; `LoadInto(PFile)` refreshes every tab. Byte edits change `p.Mem`, then the file is reloaded from the edited bytes (`edited` flag; title shows "(edited)").
 - The hex and disassembly views are virtual `ListView`s (large files must stay fast): use the cached per-line "traced" lookup and `PFile.LineAt` (binary search). The listing tab caps code rows (`MaxCodeRows`) and line length (`MaxLineChars`), and the RTF builder groups runs of the same style. Don't append to a RichTextBox character by character.
@@ -221,9 +224,9 @@ Fuzzing is the best check after changing CodeGen or Recover: generate random pro
 2. Make the change, run `tests/run_tests.sh`, then look at the screen with `python3 tests/run81.py tests/tN.p`.
 3. `asmcheck.py` must show 0 mismatches, and `run81.py` must show `rom ok`, `display ok` and SP 7FF0 (or the expected ZX81 report), and `matches expected` for the programs in `tests/expected`.
 4. Check it still compiles as C# 5 (`build.bat` / `mcs -langversion:5`).
-5. Update `MainForm.HelpText` (compiler), `DecompilerForm.HelpText` (decompiler) and README.md if user-visible behaviour changed, and bump the version (see Versions above) for a release.
+5. Update `MainForm.HelpText` (compiler), `DecompilerForm.HelpText` (decompiler), `BrowserForm.HelpText` (.P Toolkit) and README.md if user-visible behaviour changed, and bump the version (see Versions above) for a release.
 6. If the change touches `CodeGen.cs` or `Runtime.cs`, the decompiler's recovery must still verify (see the coupling rule above).
 
 ## Privacy
 
-The author's email address appears only in the About box, built at run time in `MainForm.ContactEmail()` from pieces (with the `@` written as `\u0040`). Don't put the address in plain text in any file (README, comments, help text). Some editing tools turn `\u0040` into a literal `@`; check it after editing that file.
+The author's email address appears only in the About boxes of the three GUIs (`UiCommon.AboutText`), built at run time in `UiCommon.ContactEmail()` from pieces (with the `@` written as `\u0040`). Don't put the address in plain text in any file (README, comments, help text). Some editing tools turn `\u0040` into a literal `@`; check it after editing that file.

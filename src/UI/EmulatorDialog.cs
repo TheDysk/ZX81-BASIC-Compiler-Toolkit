@@ -1,7 +1,7 @@
 // =====================================================================================
 //  EmulatorDialog.cs - choosing the emulator, and running a program in it
 // -------------------------------------------------------------------------------------
-//  Shared by the compiler and the browser. The settings are kept by ToolConfig
+//  Shared by the compiler and the .P Toolkit. The settings are kept by ToolConfig
 //  (src/Core/ToolConfig.cs) in ZX81Toolset.ini next to the programs.
 //     EmulatorUi.Configure(owner)    the Options > Configure Emulator... dialog
 //     EmulatorUi.Run(owner, file)    start the emulator with a .p file (offers to set

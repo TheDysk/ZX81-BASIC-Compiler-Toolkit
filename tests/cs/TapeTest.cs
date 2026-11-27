@@ -56,7 +56,7 @@ public static class TapeTest
 
     // ---------------------------------------------------------------- browser edits
     // REM injection (Basic81.InjectRem) and hidden numbers (Basic81.HiddenNumberOffsets),
-    // which the .P File Browser uses.
+    // which the .P Toolkit uses.
     static void EditTests(string tag, byte[] p)
     {
         var pf = PFile.Load(p);

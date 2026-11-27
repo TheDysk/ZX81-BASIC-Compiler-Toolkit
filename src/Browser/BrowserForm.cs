@@ -1,5 +1,5 @@
 // =====================================================================================
-//  BrowserForm.cs - the .P File Browser (ZX81PBrowser.exe)
+//  BrowserForm.cs - the .P Toolkit (ZX81PToolkit.exe)
 // -------------------------------------------------------------------------------------
 //  Tabs:
 //    Overview      system variables in plain English, auto-run status, RAM needed,
@@ -32,7 +32,7 @@ using System.Reflection;
 
 // Version and description stored in the .exe (Windows: Properties > Details). Keep the
 // version in step with Versions.cs.
-[assembly: AssemblyTitle(".P File Browser")]
+[assembly: AssemblyTitle(".P Toolkit")]
 [assembly: AssemblyDescription("Inspects, edits and exports ZX81 .p files")]
 [assembly: AssemblyProduct("ZX81 BASIC Toolset")]
 [assembly: AssemblyCopyright("Copyright (c) Simon Round 2026")]
@@ -71,7 +71,7 @@ namespace ZX81Compiler
 
         public BrowserForm()
         {
-            Text = ".P File Browser " + Versions.Show(Versions.Browser);
+            Text = ".P Toolkit " + Versions.Show(Versions.Browser);
             Width = 1180; Height = 800;
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 9f);
@@ -101,8 +101,9 @@ namespace ZX81Compiler
             var options = new ToolStripMenuItem("&Options");
             options.DropDownItems.Add(new ToolStripMenuItem("Configure &Emulator...", null, (s, e) => EmulatorUi.Configure(this)));
             var help = new ToolStripMenuItem("&Help");
+            help.DropDownItems.Add(new ToolStripMenuItem("&How it works...", null, (s, e) => UiCommon.ShowHelp(this, ".P Toolkit - how it works", HelpText), Keys.F1));
             help.DropDownItems.Add(new ToolStripMenuItem("&About", null, (s, e) => MessageBox.Show(this,
-                ".P File Browser " + Versions.Show(Versions.Browser) + "\n\nInspect ZX81 .p files: system variables, memory map, BASIC listing, screen, variables, hex and Z80 disassembly, graphics; open tapes (.wav, .tzx), .p81 and ZX80 .o files; export to text, .wav, .tzx, .p81 and .o; play the tape sound to a real ZX81; run in an emulator." + UiCommon.AboutText, "About")));
+                ".P Toolkit " + Versions.Show(Versions.Browser) + "\n\nInspect ZX81 .p files: system variables, memory map, BASIC listing, screen, variables, hex and Z80 disassembly, graphics; open tapes (.wav, .tzx), .p81 and ZX80 .o files; export to text, .wav, .tzx, .p81 and .o; play the tape sound to a real ZX81; run in an emulator." + UiCommon.AboutText, "About")));
             menu.Items.Add(file); menu.Items.Add(export); menu.Items.Add(options); menu.Items.Add(help);
 
             var tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
@@ -132,7 +133,7 @@ namespace ZX81Compiler
             UiCommon.AcceptDrops(this, OpenFile);
             FormClosing += (s, e) =>
             {
-                if (edited && MessageBox.Show(this, "You have edited bytes that aren't saved. Close anyway?", ".P File Browser", MessageBoxButtons.YesNo) != DialogResult.Yes) e.Cancel = true;
+                if (edited && MessageBox.Show(this, "You have edited bytes that aren't saved. Close anyway?", ".P Toolkit", MessageBoxButtons.YesNo) != DialogResult.Yes) e.Cancel = true;
             };
         }
 
@@ -144,7 +145,7 @@ namespace ZX81Compiler
 
         public void OpenFile(string file)
         {
-            if (edited && MessageBox.Show(this, "You have edited bytes that aren't saved. Open another file anyway?", ".P File Browser", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+            if (edited && MessageBox.Show(this, "You have edited bytes that aren't saved. Open another file anyway?", ".P Toolkit", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
             var lp = UiCommon.OpenProgram(this, file);    // shows the error ([mm:ss.ms] for audio) itself
             if (lp == null) return;
             try
@@ -155,10 +156,10 @@ namespace ZX81Compiler
                 converted = lp.Converted;
                 tapeName = lp.Format == "WAV audio" || lp.Format.StartsWith("TZX") || lp.Format.StartsWith(".p81") ? lp.Name : null;
                 loadNotes = lp.Notes.Count > 0 ? " (" + lp.Format + ": " + string.Join("; ", lp.Notes) + ")" : "";
-                Text = ".P File Browser " + Versions.Show(Versions.Browser) + " - " + Path.GetFileName(file) + (converted ? " (" + lp.Format + ")" : "");
+                Text = ".P Toolkit " + Versions.Show(Versions.Browser) + " - " + Path.GetFileName(file) + (converted ? " (" + lp.Format + ")" : "");
                 status.Text = Path.GetFileName(file) + ": " + p.Data.Length + " bytes, " + p.Lines.Count + " BASIC lines. " + p.AutoRunDescription() + "." + loadNotes;
                 if (lp.Notes.Count > 1 || lp.Format.StartsWith("ZX80"))
-                    MessageBox.Show(this, "Opened " + Path.GetFileName(file) + " (" + lp.Format + "):\n\n  " + string.Join("\n  ", lp.Notes), ".P File Browser", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show(this, "Opened " + Path.GetFileName(file) + " (" + lp.Format + "):\n\n  " + string.Join("\n  ", lp.Notes), ".P Toolkit", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception e) { UiCommon.Error(this, "Could not open the file:\n" + e.Message); }
         }
@@ -271,5 +272,38 @@ namespace ZX81Compiler
             if (f == null) return;
             status.Text = "Saved " + f + (tzx ? "" : " - play it into the ZX81's EAR socket after typing LOAD \"\" (program name on tape: " + name + ")");
         }
+
+        /// <summary>The Help > How it works text (markup: see UiCommon.ShowHelp). Keep it in
+        /// step with README.md. In a @"..." string, "" is one quote.</summary>
+        const string HelpText =
+@"# Opening a program
+Open a .p, .81 or .p81 file, a tape (a .wav recording of a ZX81 tape, 8 to 32-bit, mono or stereo, or a .tzx image), or a ZX80 program (.o or .80), which is converted to ZX81 BASIC. Use File > Open (Ctrl+O), the Open button, or drag the file onto the window.
+If a recording can't be read, a message gives the time in it, as [minutes:seconds.milliseconds], where it went wrong: where the signal was lost, a bit that couldn't be read, or where the recording ends in the middle of the program. If a tape holds several programs, the first is opened and the others are listed.
+
+# The tabs
+Overview :: The auto-run status (whether the program starts by itself after LOAD, and at which line), the system variables 4009h-407Ch with their values in plain English, and a memory map. RAMTOP isn't saved in a .p file, so choose the machine (1K to 16K, or a 32K or 64K RAM pack) the map is drawn for. Warnings show anything a real ZX81 can't do with the file.
+BASIC listing :: The program with ZX81 characters: keywords, inverse video and block graphics. Machine code in REM lines can be shown as Z80 instructions.
+Screen :: The saved display file, drawn as the ZX81 shows it, at a choice of sizes.
+Variables :: Every variable saved with the program: numbers, strings, arrays and FOR loops.
+Hex / Z80 :: A hex dump and a Z80 disassembly side by side, kept in step. Traced machine code is green; ROM routines and system variables are named. Double-click a row to edit bytes.
+Graphics :: Any part of memory as 8x8 tiles, to find and save character sets and user-defined graphics.
+
+# Hidden numbers
+Every number in a ZX81 BASIC line is followed by a hidden 5-byte copy that the ZX81 actually uses. Tick Show the hidden 5-byte numbers to see them as {=value}; a ! marks one that differs from the digits shown, a trick some programs use.
+To change one, double-click its {=value} (or right-click it and choose Edit hidden number). Type a new value, or the 5 bytes in hex. Only the hidden number changes, not the digits in the listing.
+
+# Inject Binary into REM
+Right-click a REM line in the listing and choose Inject Binary into REM, then a .bin file. Everything after the REM is replaced by the file's bytes. The lines after it, the display file and the variables move along, and the system variables that point at them (D_FILE, DF_CC, VARS, E_LINE, NXTLIN ...) are worked out again. The status bar says where the code now starts: 16514 for the first line of the program, which is where RAND USR 16514 goes.
+If the REM is not the last line, machine code elsewhere that uses fixed addresses after it may need changing.
+
+# Saving and exporting
+File > Save as .p keeps your changes (edited bytes, hidden numbers or REM code), or saves a tape or ZX80 program as a .p file.
+The Export menu writes the BASIC listing as text (in the same format as the decompiler's listing, so it turns back into an identical .p), a hex dump, a Z80 disassembly, the screen as a picture or text, cassette audio (.wav), a .tzx tape image, a .p81 file, and a ZX80 program (.o). The ZX80 export only works for programs that use what a ZX80 has: no PLOT, no SIN and other floating point, no numbers with a decimal point, and line numbers up to 9999. Every line that can't be converted is listed.
+
+# Play Audio to ZX81
+Plays the program as tape sound through the computer's sound output. Connect it to the ZX81's EAR socket, type LOAD """" on the ZX81 and press NEWLINE, then click Play. The progress bar shows how far it has got, and Stop ends it. Turn the volume well up; if the ZX81 doesn't load the program, try a little louder or quieter.
+
+# Run in Emulator
+File > Run in Emulator (Ctrl+F5, or the toolbar button) starts the emulator set up in Options > Configure Emulator, such as EightyOne. Give the emulator's program and its arguments; {file} is replaced by the .p file. An unchanged .p file is run from where it is; an edited program, or one opened from a tape, is run from a temporary copy. The settings are kept in ZX81Toolset.ini next to the programs (or in %APPDATA%\ZX81Toolset), shared with the compiler.";
     }
 }

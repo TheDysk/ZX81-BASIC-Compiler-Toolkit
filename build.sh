@@ -15,5 +15,5 @@ $CS $LIBS -out:build/zx81c.exe -main:ZX81Compiler.CliMain $CORE src/Compiler/Cli
 $CS $LIBS -out:build/zx81dc.exe -main:ZX81Compiler.DecompilerCli $CORE src/Decompiler/DecompilerCli.cs
 $CS $LIBS $GUI -out:build/ZX81BasicCompiler.exe -main:ZX81Compiler.Program $CORE $UI src/Compiler/Cli.cs src/Compiler/MainForm.cs
 $CS $LIBS $GUI -out:build/ZX81Decompiler.exe -main:ZX81Compiler.DecompilerProgram $CORE $UI src/Decompiler/DecompilerForm.cs
-$CS $LIBS $GUI -out:build/ZX81PBrowser.exe -main:ZX81Compiler.BrowserProgram $CORE $UI src/Browser/*.cs
+$CS $LIBS $GUI -out:build/ZX81PToolkit.exe -main:ZX81Compiler.BrowserProgram $CORE $UI src/Browser/*.cs
 echo "Built: $(ls build/*.exe | tr '\n' ' ')"

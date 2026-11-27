@@ -1,5 +1,5 @@
 // =====================================================================================
-//  BrowserExtras.cs - more of the .P File Browser (part of BrowserForm):
+//  BrowserExtras.cs - more of the .P Toolkit (part of BrowserForm):
 //    Run in Emulator            start the emulator set up in Options > Configure Emulator
 //    Play Audio to ZX81         play the tape sound (with progress and Stop) so a real
 //                               ZX81 can LOAD the program from the computer's sound output
@@ -260,7 +260,7 @@ namespace ZX81Compiler
             int firstRow = rtb.GetLineFromCharIndex(first);
             LoadInto(PFile.Load(data));
             edited = true;
-            Text = ".P File Browser " + Versions.Show(Versions.Browser) + " - " + Path.GetFileName(path) + " (edited)";
+            Text = ".P Toolkit " + Versions.Show(Versions.Browser) + " - " + Path.GetFileName(path) + " (edited)";
             status.Text = what + " Use Save as .p... to keep the changes.";
             if (firstRow > 0)
             {

@@ -72,7 +72,7 @@ namespace ZX81Compiler
             file.DropDownItems.Add(new ToolStripSeparator());
             file.DropDownItems.Add(new ToolStripMenuItem("E&xit", null, (s, e) => Close()));
             var help = new ToolStripMenuItem("&Help");
-            help.DropDownItems.Add(new ToolStripMenuItem("&How it works...", null, (s, e) => MessageBox.Show(this, HelpText, "ZX81 Decompiler")));
+            help.DropDownItems.Add(new ToolStripMenuItem("&How it works...", null, (s, e) => UiCommon.ShowHelp(this, "ZX81 Decompiler - how it works", HelpText), Keys.F1));
             help.DropDownItems.Add(new ToolStripMenuItem("&About", null, (s, e) => MessageBox.Show(this,
                 "ZX81 Decompiler " + Versions.Show(Versions.Decompiler) + "\n\nTurns a .p file back into a BASIC listing, finds and disassembles machine code, and rebuilds the BASIC of programs made by the ZX81 BASIC Compiler." + UiCommon.AboutText, "About")));
             menu.Items.Add(file); menu.Items.Add(help);
@@ -202,41 +202,28 @@ namespace ZX81Compiler
             if (warn > 0) MessageBox.Show(this, string.Join("\n", diags.Take(12).Select(d => d.ToString())), "Warnings");
         }
 
+        /// <summary>The Help > How it works text (markup: see UiCommon.ShowHelp).</summary>
         const string HelpText =
-@"OPENING
-.p, .81 and .p81 files, tapes - a .wav recording of a ZX81 tape (8 or 16-bit,
-mono or stereo) or a .tzx image - and ZX80 programs (.o, .80), which are converted
-to ZX81 BASIC. If a recording can't be read, the message gives the time in it
-[minutes:seconds.milliseconds] where it went wrong.
+@"# Opening a program
+Open a .p, .81 or .p81 file, a tape (a .wav recording of a ZX81 tape, 8 to 32-bit, mono or stereo, or a .tzx image), or a ZX80 program (.o or .80), which is converted to ZX81 BASIC. Use File > Open (Ctrl+O), the Open button, or drag the file onto the window.
+If a recording can't be read, the message gives the time in it, as [minutes:seconds.milliseconds], where it went wrong. For a tape, the Report tab starts with where the program was found.
 
-LISTING (AS STORED)
-The BASIC exactly as it is stored in the file. Anything that can't be written as
-ordinary BASIC text - such as machine code hidden in REM lines - is written as \hh
-escapes (one byte in hex), so 'Make .p' turns the text back into the same bytes.
-Lines starting with # are notes and are ignored.
+# Listing (as stored)
+The BASIC exactly as it is stored in the file. Anything that can't be written as ordinary BASIC text, such as machine code hidden in REM lines, is written as \hh escapes (one byte in hex), so Make .p turns the text back into exactly the same bytes. Lines starting with # are notes and are ignored.
 
-BASIC REBUILT FROM MACHINE CODE
-Only for programs made by the ZX81 BASIC Compiler. The decompiler reads the
-compiled machine code back into BASIC statements. Variable names aren't stored in
-machine code, so variables are renamed A, B, C ... If the report says 'Verified',
-compiling the rebuilt BASIC gives exactly the same machine code.
-The RAM the program was compiled for (16K, 32K or 64K) is detected too, and shown
-in the report and at the top of the rebuilt BASIC.
-Everything the compiler supports is recognised, including floating point (SIN, PI,
-0.5 ...), LPRINT, COPY, SAVE, LOAD and NEW. Lines that compile to nothing (REM,
-LIST, LLIST, CONT) can only come back as REM, and only when the program had a
-line table (computed GOTO / GOSUB); otherwise lines are renumbered 10, 20, 30 ...
-Ordinary machine code (written by hand or by other tools) can't be turned back
-into BASIC - it is shown in the Machine code tab instead.
+# BASIC rebuilt from machine code
+Only for programs made by the ZX81 BASIC Compiler. The decompiler reads the compiled machine code back into BASIC statements. Variable names aren't stored in machine code, so the variables are renamed A, B, C ... If the report says 'Verified', compiling the rebuilt BASIC gives exactly the same machine code.
+The RAM the program was compiled for (16K, 32K or 64K) is detected too, and shown in the report and at the top of the rebuilt BASIC.
+Everything the compiler supports is recognised, including floating point (SIN, PI, 0.5 ...), LPRINT, COPY, SAVE, LOAD and NEW. Lines that compile to nothing (REM, LIST, LLIST, CONT) can only come back as REM, and only when the program had a line table (computed GOTO / GOSUB); otherwise the lines are renumbered 10, 20, 30 ...
+Ordinary machine code (written by hand or by other tools) can't be turned back into BASIC. It is shown in the Machine code tab instead.
 
-MACHINE CODE (.ASM)
-Machine code found by following every USR in the program: in REM lines, split
-across several lines, in the variables area or after the display file. Known ROM
-routines and system variables are shown by name, and the bytes after RST 28h
-(the ROM calculator) and RST 08h (error reports) are explained. The listing can
-be assembled again (e.g. with pasmo) to give the same bytes.
+# Machine code (.asm)
+Machine code is found by following every USR in the program: in REM lines, split across several lines, in the variables area or after the display file. Known ROM routines and system variables are shown by name, and the bytes after RST 28h (the ROM calculator) and RST 08h (error reports) are explained. The listing can be assembled again (e.g. with pasmo) to give the same bytes.
 
-MAKE .P
-Turns the Listing or BASIC tab (with your edits) into a .p file for an emulator.";
+# Make .p
+Turns the Listing or BASIC tab, with your edits, into a .p file for an emulator. Tick the boxes to keep the original screen and saved variables.
+
+# Command line
+zx81dc.exe does the same from the command line. zx81dc --help lists the options; --extract file writes the program as read (for example from a .wav) as a .p file.";
     }
 }

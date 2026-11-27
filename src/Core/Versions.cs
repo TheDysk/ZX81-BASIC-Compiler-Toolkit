@@ -8,7 +8,7 @@
 //
 //     Compiler    ZX81BasicCompiler.exe and zx81c.exe     (src/Compiler/Cli.cs)
 //     Decompiler  ZX81Decompiler.exe and zx81dc.exe       (src/Decompiler/*.cs)
-//     Browser     ZX81PBrowser.exe                        (src/Browser/BrowserForm.cs)
+//     Browser     ZX81PToolkit.exe                        (src/Browser/BrowserForm.cs)
 // =====================================================================================
 namespace ZX81Compiler
 {
@@ -18,7 +18,7 @@ namespace ZX81Compiler
         public const string Compiler = "1.00";
         /// <summary>ZX81 Decompiler (GUI and command line).</summary>
         public const string Decompiler = "1.00";
-        /// <summary>.P File Browser.</summary>
+        /// <summary>.P Toolkit.</summary>
         public const string Browser = "1.00";
 
         /// <summary>The form shown to users: "V1.00".</summary>

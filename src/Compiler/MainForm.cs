@@ -56,7 +56,11 @@ namespace ZX81Compiler
         public MainForm()
         {
             Text = "ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler);
-            Width = 1000; Height = 720;
+            // Wide enough for the whole options row; never bigger than the screen. If the
+            // window is made narrower, the options wrap onto a second row instead of vanishing.
+            var work = Screen.PrimaryScreen.WorkingArea;
+            Width = Math.Min(1280, work.Width); Height = Math.Min(760, work.Height);
+            MinimumSize = new Size(640, 420);
             StartPosition = FormStartPosition.CenterScreen;
             AllowDrop = true;    // files can be dragged onto the window
             Font = new Font("Segoe UI", 9f);
@@ -80,9 +84,9 @@ namespace ZX81Compiler
             var options = new ToolStripMenuItem("&Options");
             options.DropDownItems.Add(new ToolStripMenuItem("Configure &Emulator...", null, (s, e) => EmulatorUi.Configure(this)));
             var help = new ToolStripMenuItem("&Help");
-            help.DropDownItems.Add(new ToolStripMenuItem("&Supported BASIC...", null, (s, e) => ShowHelp()));
+            help.DropDownItems.Add(new ToolStripMenuItem("&How it works / Supported BASIC...", null, (s, e) => ShowHelp(), Keys.F1));
             help.DropDownItems.Add(new ToolStripMenuItem("&About", null, (s, e) => MessageBox.Show(this,
-                "ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler) + "\n\nCompiles a ZX81 BASIC text listing into Z80 machine code held in line 0 (REM), with line 10 RAND USR 16514, saved as a .p file.\n\nTarget: ZX81 with 16K, 32K or 64K RAM.\n\nCopyright (c) Simon Round 2026\nEmail: " + ContactEmail(), "About")));
+                "ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler) + "\n\nCompiles a ZX81 BASIC text listing into Z80 machine code held in line 0 (REM), with line 10 RAND USR 16514, saved as a .p file.\n\nTarget: ZX81 with 16K, 32K or 64K RAM." + UiCommon.AboutText, "About")));
             menu.Items.Add(file); menu.Items.Add(build); menu.Items.Add(options); menu.Items.Add(help);
 
             // ---- toolbar ----
@@ -98,8 +102,9 @@ namespace ZX81Compiler
             tools.Items.Add(new ToolStripButton("Compile && Run  (Ctrl+F5)", null, (s, e) => CompileAndRun()));
 
             // ---- options panel ----
-            // A FlowLayoutPanel lays its controls out left to right.
-            var opts = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 34, Padding = new Padding(6, 6, 6, 0), WrapContents = false };
+            // A FlowLayoutPanel lays its controls out left to right, wrapping onto another
+            // row (and growing taller) when the window is too narrow for them all.
+            var opts = new FlowLayoutPanel { Dock = DockStyle.Top, Padding = new Padding(6, 6, 6, 4), WrapContents = true, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink };
             chkAutorun = new CheckBox { Text = "Auto-run after LOAD", Checked = true, AutoSize = true };
             chkBreak = new CheckBox { Text = "BREAK (SPACE) stops program", Checked = true, AutoSize = true };
             chkLower = new CheckBox { Text = "Lower case in strings = inverse", Checked = false, AutoSize = true };
@@ -120,7 +125,7 @@ namespace ZX81Compiler
             tips.SetToolTip(cbRam, "The RAM pack the program is for. With 32K or 64K the variables go above 32K (8000h), giving 16K or 32K for variables, arrays and strings. The code itself must still fit below 32K.");
             foreach (Control c in new Control[] { chkAutorun, chkBreak, chkLower, chkAsm, chkStrict, lbl, numMaxStr, lblRam, cbRam })
             {
-                c.Margin = new Padding(4, 0, 12, 0);
+                c.Margin = new Padding(4, 0, 12, 4);
                 opts.Controls.Add(c);
             }
 
@@ -173,12 +178,6 @@ namespace ZX81Compiler
             };
             FormClosing += (s, e) => { if (!ConfirmDiscard()) e.Cancel = true; };
             UpdateTitle();
-        }
-
-        // Built from pieces so the full address doesn't appear as plain text in the source (spam bots scan GitHub)
-        static string ContactEmail()
-        {
-            return string.Join("", new[] { "thedysk", "\u0040", "gmail", ".", "com" });
         }
 
         /// <summary>Window title: file name, with * if there are unsaved changes.</summary>
@@ -382,116 +381,73 @@ namespace ZX81Compiler
             editor.ScrollToCaret();
         }
 
-        /// <summary>Help > Supported BASIC: shows HelpText in a read-only window.</summary>
-        void ShowHelp()
-        {
-            var f = new Form { Text = "Supported BASIC", Width = 760, Height = 640, StartPosition = FormStartPosition.CenterParent };
-            var t = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Text = HelpText.Replace("\n", "\r\n"), Font = new Font(FontFamily.GenericMonospace, 9.5f) };
-            try { t.Font = new Font("Consolas", 9.5f); } catch { }
-            f.Controls.Add(t);
-            f.ShowDialog(this);
-        }
+        /// <summary>Help > How it works: the help text in a window where paragraphs flow.</summary>
+        void ShowHelp() { UiCommon.ShowHelp(this, "ZX81 BASIC Compiler - how it works and what is supported", HelpText); }
 
-        /// <summary>The Help > Supported BASIC text. Keep this up to date when features
-        /// change (README.md has the same information). In a @"..." string, "" is one quote.</summary>
+        /// <summary>The Help > How it works text. Keep this up to date when features change
+        /// (README.md has the same information). In a @"..." string, "" is one quote.
+        /// Markup (see UiCommon.ShowHelp): "# " heading, "- " bullet, "term :: meaning",
+        /// 4-space indented examples; every other line is a paragraph (the window wraps it).</summary>
         public const string HelpText =
-@"ZX81 BASIC COMPILER - WHAT IS SUPPORTED
-
-The listing is a plain text file, one numbered ZX81 BASIC line per line:
+@"# What it does
+The listing is a plain text file, one numbered ZX81 BASIC line per text line, for example:
     10 PRINT AT 0,0;""\00\00\2d\85\17\17\17\2b\2e\33\29""
-Output: a .p file with the machine code in line 0 (REM) and
-line 10 RAND USR 16514, which runs it. Needs a ZX81 with 16K RAM.
+The compiler turns it into a .p file with the machine code in line 0 (a REM) and line 10 RAND USR 16514, which runs it. By default the program starts by itself after loading. It needs a ZX81 with 16K RAM, or a 32K or 64K RAM pack (see below).
 
-SPECIAL CHARACTERS IN STRINGS
-  \hh      any ZX81 character code in hex, e.g. \80 (black square),
-           \85, \17 (*), \00 (space). Keyword codes (\C1 and up) are
-           printed as the keyword text; \C0 is the "" quote image.
-  \'' \.. \:: etc.  block graphics, zmakebas/ZXText2P style
-           (2 chars: left half, right half; ' top, . bottom, : both)
-  %A       inverse character (ZXText2P style)
-  """"       a quote character inside a string
-  Unicode block characters (▘▝▀▖▌▞▛▒█▟▙▄▜▐▚▗) also work.
+# Special characters in strings
+\hh :: Any ZX81 character code in hex, e.g. \80 (black square), \85, \17 (*), \00 (space). Keyword codes (\C1 and up) print as the keyword text; \C0 is the """" quote image.
+\'' \.. \:: :: Block graphics, zmakebas/ZXText2P style: two characters for the left and right halves; ' is the top, . the bottom and : both.
+%A :: An inverse character (ZXText2P style).
+"""" :: A quote character inside a string.
+▘▝▀▖▌▞▛▒█ :: Unicode block characters (▘▝▀▖▌▞▛▒█▟▙▄▜▐▚▗) are accepted too.
 
-STATEMENTS
-  LET (optional), PRINT (with ; , AT y,x  TAB n), IF..THEN statement
-  or line number, GOTO / GO TO, GOSUB / GO SUB, RETURN, FOR..TO..STEP,
-  NEXT, DIM, INPUT, POKE, PLOT, UNPLOT, SCROLL, CLS, PAUSE, RAND,
-  STOP, CLEAR, RUN, FAST, SLOW, REM.
-  GOTO/GOSUB to a calculated line number (GOTO 100*N) works.
-  LPRINT (with ; , AT TAB) and COPY use the ZX printer through the ROM.
-  SAVE ""name"" saves the program to tape and carries on; LOAD ""name""
-  (or LOAD """") loads another program, which then runs if it auto-runs.
-  NEW wipes the program, as on the ZX81.
-  LIST, LLIST and CONT do nothing in a compiled program (warning).
+# Statements
+LET (optional), PRINT (with ; , AT y,x and TAB n), IF ... THEN followed by a statement or a line number, GOTO / GO TO, GOSUB / GO SUB, RETURN, FOR ... TO ... STEP, NEXT, DIM, INPUT, POKE, PLOT, UNPLOT, SCROLL, CLS, PAUSE, RAND, STOP, CLEAR, RUN, FAST, SLOW and REM.
+- GOTO and GOSUB can go to a calculated line number, e.g. GOTO 100*N.
+- LPRINT (with ; , AT and TAB) and COPY use the ZX printer through the ROM.
+- SAVE ""name"" saves the program to tape and then carries on. LOAD ""name"" (or LOAD """") loads another program, which then runs if it auto-runs.
+- NEW wipes the program, as on the ZX81.
+- LIST, LLIST and CONT do nothing in a compiled program (with a warning): there is no BASIC to list and nothing to continue.
 
-FUNCTIONS
-  ABS SGN INT SQR PEEK USR CODE LEN VAL CHR$ STR$ INKEY$ RND PI
-  SIN COS TAN ASN ACS ATN LN EXP
-  NOT AND OR, = <> < > <= >= (numbers and strings), + - * / **
-  String slicing: A$(2), A$(2 TO 5), A$( TO 3), A$(4 TO ).
+# Functions and operators
+ABS SGN INT SQR PEEK USR CODE LEN VAL CHR$ STR$ INKEY$ RND PI SIN COS TAN ASN ACS ATN LN EXP; NOT AND OR; comparisons = <> < > <= >= on numbers and strings; + - * / **.
+String slicing works: A$(2), A$(2 TO 5), A$( TO 3), A$(4 TO ).
 
-WHOLE NUMBERS AND FLOATING POINT
-  Numbers are normally whole numbers from -32768 to 32767, which is
-  what makes compiled programs fast. An expression that uses SIN COS
-  TAN ASN ACS ATN LN EXP SQR PI VAL, RND on its own, or a number with
-  a decimal point (0.5, 1.0) is worked out in floating point by the
-  ZX81 ROM's own calculator, exactly as the ZX81 would, e.g.
-      PLOT 32+20*COS (A*PI/180),22+20*SIN (A*PI/180)
-  Where the result is used as a number - stored in a variable, used by
-  PLOT, AT, a subscript... - it is rounded to the nearest whole number,
-  as the ZX81 does when it needs a whole number. PRINT and STR$ show
-  the full value (PRINT SIN 1 shows 0.84147099). This is slower, like
-  the ZX81 itself, so keep it out of the busiest loops.
-  Errors in floating point (SQR -1, LN 0, ...) stop the program with
-  the ZX81 report code, e.g. A/10. VAL works out any expression in its
-  string, but can't see the program's variables.
+# Whole numbers and floating point
+Numbers are normally whole numbers from -32768 to 32767, which is what makes compiled programs fast.
+An expression that uses SIN COS TAN ASN ACS ATN LN EXP SQR PI VAL, RND on its own, or a number with a decimal point (0.5, 1.0) is worked out in floating point by the ZX81 ROM's own calculator, exactly as the ZX81 would, e.g.
+    PLOT 32+20*COS (A*PI/180),22+20*SIN (A*PI/180)
+- Where the result is used as a number (stored in a variable, used by PLOT or AT, a subscript ...) it is rounded to the nearest whole number, as the ZX81 does when it needs a whole number.
+- PRINT and STR$ show the full value: PRINT SIN 1 shows 0.84147099.
+- Floating point is as slow as the ZX81 itself, so keep it out of the busiest loops.
+- Errors in floating point (SQR -1, LN 0 ...) stop the program with the ZX81 report code, e.g. A/10.
+- VAL works out any expression in its string, but can't see the program's variables.
 
-STRICT INTEGER MODE
-  Put #STRICT_INT on a line of its own (or tick Strict integer, or use
-  --strict-int) to forbid floating point: every expression that would
-  need the ROM calculator, and every number that isn't whole, is a
-  compile error, so the program is guaranteed to be all fast code.
+# Strict integer mode
+Put #STRICT_INT on a line of its own (or tick Strict integer, or use --strict-int on the command line) to forbid floating point. Every expression that would need the ROM calculator, and every number that isn't whole, is then a compile error, so the program is guaranteed to be all fast code.
 
-COMPILE & RUN
-  Build > Compile && Run (Ctrl+F5, or --run on the command line) saves
-  the .p file and starts an emulator with it. Set the emulator up with
-  Options > Configure Emulator...: the program to run and its arguments,
-  where {file} is replaced by the .p file. The settings are kept in
-  ZX81Toolset.ini next to the programs (or in %APPDATA%\ZX81Toolset).
+# Compile & Run
+Build > Compile & Run (Ctrl+F5, or --run on the command line) saves the .p file and starts an emulator with it. Set the emulator up with Options > Configure Emulator...: the program to run and its arguments, where {file} is replaced by the .p file. The settings are kept in ZX81Toolset.ini next to the programs (or in %APPDATA%\ZX81Toolset).
 
-SIZES
-  When a listing is opened, a trial compile shows the expected size of
-  the machine code and variables, and whether it fits the ZX81's RAM
-  (and if not, whether a 32K or 64K RAM pack would). After compiling,
-  the sizes are shown in bytes and K.
+# Sizes
+When a listing is opened, a trial compile shows the expected size of the machine code and variables, and whether it fits the ZX81's RAM (and if not, whether a 32K or 64K RAM pack would). After compiling, the sizes are shown in bytes and K.
 
-RAM PACKS: 16K, 32K AND 64K
-  Choose the RAM the program is for (RAM box, or --ram 16|32|64).
-  16K (the default): everything lives below 32K (8000h).
-  32K / 64K: the variables, arrays and strings go above 32K: 8000h-BFFFh
-  (16K of room) with a 32K pack, 8000h-FFFFh (32K of room) with a 64K
-  pack. The machine code and the screen stay below 32K, because a ZX81
-  can only run code and show the display there, so the code itself can't
-  grow beyond about 15K. RAMTOP can be left alone, or raised (the
-  variables then sit below the stack). When the program starts it checks
-  that the RAM is really there and shows NEEDS 32K RAM (or 64K) if not.
+# RAM packs: 16K, 32K and 64K
+Choose the RAM the program is for in the RAM box (or --ram 16|32|64).
+16K :: The default: everything lives below 32K (8000h).
+32K / 64K :: The variables, arrays and strings go above 32K: 8000h-BFFFh (16K of room) with a 32K pack, 8000h-FFFFh (32K of room) with a 64K pack.
+The machine code and the screen stay below 32K, because a ZX81 can only run code and show the display there, so the code itself can't grow beyond about 15K. RAMTOP can be left alone, or raised (the variables then sit below the stack). When the program starts it checks that the RAM is really there, and shows NEEDS 32K RAM (or 64K) if not.
 
-DIFFERENCES FROM ZX81 BASIC
-  * Outside floating point, maths is whole-number: 7/2 = 3, 2**-1 = 0.
-    Write 7/2.0 (or 7/2*1.0) to get 3.5.
-  * Variables hold whole numbers, so LET X=2.5 stores 3.
-  * RND*n gives a fast whole number from 0 to n-1, so the usual
-    INT (RND*6)+1 works as expected. RND on its own is 0 to 0.99998.
-  * Variables start at 0 (no 'variable not found' error).
-  * DIM sizes must be constant numbers. Arrays are not bounds checked.
-  * Ordinary string variables hold up to 'Max string length'
-    characters (default 255). DIM A$(n) gives a fixed-length string and
-    DIM A$(n,m) an array of n strings of m characters, as on the ZX81.
-  * Printing past the bottom of the screen scrolls instead of stopping
-    with error 5.
-  * Only one statement per line (as on the ZX81).
-  * INPUT accepts a number or text typed on the bottom line; NEWLINE
-    ends it and RUBOUT (SHIFT 0) deletes.
+# Differences from ZX81 BASIC
+- Outside floating point, maths is whole-number: 7/2 = 3 and 2**-1 = 0. Write 7/2.0 (or 7/2*1.0) to get 3.5.
+- Variables hold whole numbers, so LET X=2.5 stores 3.
+- RND*n gives a fast whole number from 0 to n-1, so the usual INT (RND*6)+1 works as expected. RND on its own is 0 to 0.99998.
+- Variables start at 0 (no 'variable not found' error).
+- DIM sizes must be constant numbers. Arrays are not bounds checked.
+- Ordinary string variables hold up to 'Max string length' characters (default 255). DIM A$(n) gives a fixed-length string and DIM A$(n,m) an array of n strings of m characters, as on the ZX81.
+- Printing past the bottom of the screen scrolls instead of stopping with error 5.
+- Only one statement per line, as on the ZX81.
+- INPUT accepts a number or text typed on the bottom line; NEWLINE ends it and RUBOUT (SHIFT 0) deletes.
 ";
     }
 }

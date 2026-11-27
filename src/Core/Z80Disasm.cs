@@ -373,7 +373,7 @@ namespace ZX81Compiler
         }
 
         // ------------------------------------------------------------------
-        //  Simple linear listing (used by the browser's disassembly pane)
+        //  Simple linear listing (used by the .P Toolkit's disassembly pane)
         // ------------------------------------------------------------------
         /// <summary>Disassemble from start to end, one instruction after another.</summary>
         public static List<Instr> Linear(byte[] mem, int start, int end, Func<int, string> label)
