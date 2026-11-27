@@ -45,6 +45,7 @@ namespace ZX81Compiler
         readonly CheckBox chkAutorun, chkBreak, chkLower, chkAsm;   // the compile options
         readonly NumericUpDown numMaxStr;                      // Options.MaxString
         readonly ComboBox cbRam;                               // Options.Ram: 16K, 32K or 64K
+        readonly CheckBox chkStrict;                           // Options.StrictInt
         readonly ToolStripStatusLabel status;                  // status bar text
         // ---- state ----
         string listingPath;   // file the listing was loaded from / saved to (null = never saved)
@@ -74,11 +75,15 @@ namespace ZX81Compiler
             build.DropDownItems.Add(new ToolStripMenuItem("&Compile to .p", null, (s, e) => CompileNow(false), Keys.F5));
             build.DropDownItems.Add(new ToolStripMenuItem("Compile to .p &as...", null, (s, e) => CompileNow(true), Keys.Shift | Keys.F5));
             build.DropDownItems.Add(new ToolStripMenuItem("Check &syntax only", null, (s, e) => CheckOnly(), Keys.F7));
+            build.DropDownItems.Add(new ToolStripSeparator());
+            build.DropDownItems.Add(new ToolStripMenuItem("Compile && &Run", null, (s, e) => CompileAndRun(), Keys.Control | Keys.F5));
+            var options = new ToolStripMenuItem("&Options");
+            options.DropDownItems.Add(new ToolStripMenuItem("Configure &Emulator...", null, (s, e) => EmulatorUi.Configure(this)));
             var help = new ToolStripMenuItem("&Help");
             help.DropDownItems.Add(new ToolStripMenuItem("&Supported BASIC...", null, (s, e) => ShowHelp()));
             help.DropDownItems.Add(new ToolStripMenuItem("&About", null, (s, e) => MessageBox.Show(this,
-                "ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler) + "\n\nCompiles a ZX81 BASIC text listing into Z80 machine code held in line 0 (REM), with line 10 RAND USR 16514, saved as a .p file.\n\nTarget: ZX81 with 16K RAM.\n\nCopyright (c) Simon Round 2026\nEmail: " + ContactEmail(), "About")));
-            menu.Items.Add(file); menu.Items.Add(build); menu.Items.Add(help);
+                "ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler) + "\n\nCompiles a ZX81 BASIC text listing into Z80 machine code held in line 0 (REM), with line 10 RAND USR 16514, saved as a .p file.\n\nTarget: ZX81 with 16K, 32K or 64K RAM.\n\nCopyright (c) Simon Round 2026\nEmail: " + ContactEmail(), "About")));
+            menu.Items.Add(file); menu.Items.Add(build); menu.Items.Add(options); menu.Items.Add(help);
 
             // ---- toolbar ----
             var tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
@@ -89,6 +94,8 @@ namespace ZX81Compiler
             tools.Items.Add(compileBtn);
             tools.Items.Add(new ToolStripButton("Compile as...", null, (s, e) => CompileNow(true)));
             tools.Items.Add(new ToolStripButton("Check (F7)", null, (s, e) => CheckOnly()));
+            tools.Items.Add(new ToolStripSeparator());
+            tools.Items.Add(new ToolStripButton("Compile && Run  (Ctrl+F5)", null, (s, e) => CompileAndRun()));
 
             // ---- options panel ----
             // A FlowLayoutPanel lays its controls out left to right.
@@ -97,6 +104,7 @@ namespace ZX81Compiler
             chkBreak = new CheckBox { Text = "BREAK (SPACE) stops program", Checked = true, AutoSize = true };
             chkLower = new CheckBox { Text = "Lower case in strings = inverse", Checked = false, AutoSize = true };
             chkAsm = new CheckBox { Text = "Also save .asm listing", Checked = false, AutoSize = true };
+            chkStrict = new CheckBox { Text = "Strict integer", Checked = false, AutoSize = true };
             var lbl = new Label { Text = "Max string length:", AutoSize = true, Padding = new Padding(10, 4, 0, 0) };
             numMaxStr = new NumericUpDown { Minimum = 1, Maximum = 255, Value = 255, Width = 55 };
             var lblRam = new Label { Text = "RAM:", AutoSize = true, Padding = new Padding(10, 4, 0, 0) };
@@ -107,9 +115,10 @@ namespace ZX81Compiler
             tips.SetToolTip(chkAutorun, "The program starts by itself when loaded (via line 10 RAND USR 16514).");
             tips.SetToolTip(chkBreak, "Checks the BREAK key on every GOTO and NEXT, like ZX81 BASIC. Untick for games that use SPACE.");
             tips.SetToolTip(chkLower, "If ticked, lower case letters inside \"strings\" become inverse video letters.");
+            tips.SetToolTip(chkStrict, "No floating point: SIN, PI, numbers like 0.5, VAL and RND on its own become errors, so the program is all fast whole-number code. A line #STRICT_INT in the listing does the same.");
             tips.SetToolTip(numMaxStr, "Room reserved for each ordinary string variable (A$..Z$). Lower it if you run out of memory.");
             tips.SetToolTip(cbRam, "The RAM pack the program is for. With 32K or 64K the variables go above 32K (8000h), giving 16K or 32K for variables, arrays and strings. The code itself must still fit below 32K.");
-            foreach (Control c in new Control[] { chkAutorun, chkBreak, chkLower, chkAsm, lbl, numMaxStr, lblRam, cbRam })
+            foreach (Control c in new Control[] { chkAutorun, chkBreak, chkLower, chkAsm, chkStrict, lbl, numMaxStr, lblRam, cbRam })
             {
                 c.Margin = new Padding(4, 0, 12, 0);
                 opts.Controls.Add(c);
@@ -257,7 +266,8 @@ namespace ZX81Compiler
                 LowerIsInverse = chkLower.Checked,
                 MaxString = (int)numMaxStr.Value,
                 MakeListing = chkAsm.Checked,
-                Ram = 16 << cbRam.SelectedIndex          // 16, 32, 64
+                Ram = 16 << cbRam.SelectedIndex,         // 16, 32, 64
+                StrictInt = chkStrict.Checked
             };
         }
 
@@ -292,9 +302,17 @@ namespace ZX81Compiler
             else status.Text = "Errors found - see messages.";
         }
 
+        /// <summary>Build > Compile && Run (Ctrl+F5): compile, save, and start the emulator
+        /// set up in Options > Configure Emulator with the new file.</summary>
+        void CompileAndRun()
+        {
+            if (!CompileNow(false)) return;
+            if (EmulatorUi.Run(this, outputPath)) status.Text = "Saved " + outputPath + " and started the emulator.";
+        }
+
         /// <summary>Build > Compile to .p. Asks for a file name the first time (or always
-        /// when askName is true), then saves there on later compiles.</summary>
-        void CompileNow(bool askName)
+        /// when askName is true), then saves there on later compiles. Returns true if saved.</summary>
+        bool CompileNow(bool askName)
         {
             var res = RunCompiler();
             ShowDiagnostics(res);
@@ -303,7 +321,7 @@ namespace ZX81Compiler
                 if (res.MemoryEnd != 0) AddLines(Compiler.SizeLines(res));   // out of memory: show the sizes
                 status.Text = "Compilation failed - see messages.";
                 if (messages.Items.Count > 0) messages.SelectedIndex = 0;
-                return;
+                return false;
             }
             if (askName || outputPath == null)
             {
@@ -313,7 +331,7 @@ namespace ZX81Compiler
                     if (outputPath != null) { d.InitialDirectory = Path.GetDirectoryName(outputPath); d.FileName = Path.GetFileName(outputPath); }
                     else if (listingPath != null) { d.InitialDirectory = Path.GetDirectoryName(listingPath); d.FileName = Path.GetFileNameWithoutExtension(listingPath) + ".p"; }
                     else d.FileName = "program.p";
-                    if (d.ShowDialog(this) != DialogResult.OK) { status.Text = "Compiled OK but not saved."; return; }
+                    if (d.ShowDialog(this) != DialogResult.OK) { status.Text = "Compiled OK but not saved."; return false; }
                     outputPath = d.FileName;
                 }
             }
@@ -325,11 +343,12 @@ namespace ZX81Compiler
             catch (Exception ex)
             {
                 MessageBox.Show(this, "Could not write the file:\n" + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
+                return false;
             }
             AddLines(res.Summary);
             messages.Items.Add("Saved " + outputPath);
             status.Text = "Saved " + outputPath + "  -  machine code " + Compiler.Size(res.CodeSize) + ", .p file " + Compiler.Size(res.PFile.Length);
+            return true;
         }
 
         /// <summary>Add text to the messages list, one item per line.</summary>
@@ -426,6 +445,19 @@ WHOLE NUMBERS AND FLOATING POINT
   Errors in floating point (SQR -1, LN 0, ...) stop the program with
   the ZX81 report code, e.g. A/10. VAL works out any expression in its
   string, but can't see the program's variables.
+
+STRICT INTEGER MODE
+  Put #STRICT_INT on a line of its own (or tick Strict integer, or use
+  --strict-int) to forbid floating point: every expression that would
+  need the ROM calculator, and every number that isn't whole, is a
+  compile error, so the program is guaranteed to be all fast code.
+
+COMPILE & RUN
+  Build > Compile && Run (Ctrl+F5, or --run on the command line) saves
+  the .p file and starts an emulator with it. Set the emulator up with
+  Options > Configure Emulator...: the program to run and its arguments,
+  where {file} is replaced by the .p file. The settings are kept in
+  ZX81Toolset.ini next to the programs (or in %APPDATA%\ZX81Toolset).
 
 SIZES
   When a listing is opened, a trial compile shows the expected size of

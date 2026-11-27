@@ -11,7 +11,12 @@
 //    Hex / Z80     synchronised hex dump and disassembly of 4009h to the end, with
 //                  ROM routines and system variables named; bytes can be edited
 //    Graphics      memory shown as 8x8 tiles to find character sets / UDGs
-//  Export menu: listing text, hex dump, disassembly, screen picture/text, .wav, .tzx.
+//  Opens .p .81 .p81 ZX80 .o/.80 files and tapes (.wav recordings, .tzx images).
+//  Export menu: listing text, hex dump, disassembly, screen picture/text, .wav, .tzx,
+//  .p81, ZX80 .o; Play Audio to ZX81 (plays the tape sound to a real ZX81).
+//  Run in Emulator (Ctrl+F5) starts the emulator set up in Options > Configure Emulator.
+//  Listing tab: double-click a {=value} to edit a hidden number; right-click a REM line
+//  to inject a binary file into it. (BrowserExtras.cs holds these.)
 //  The work is done by the shared classes in src/Core; this file is the user interface.
 //  (BrowserTabs.cs holds the code that fills each tab.)
 // =====================================================================================
@@ -57,6 +62,9 @@ namespace ZX81Compiler
         CodeAnalysis ca;         // machine code found in it
         RecoverResult rec;       // compiled-by-the-toolset details (if any)
         bool edited;             // bytes changed in the hex editor
+        bool converted;          // opened from a tape, .p81 or ZX80 file (not saved as .p yet)
+        string tapeName;         // the program's name on the tape it was opened from (else null)
+        string loadNotes = "";   // what was done when it was opened (tape position, conversion)
 
         readonly TabControl tabs = new TabControl { Dock = DockStyle.Fill };
         readonly ToolStripStatusLabel status = new ToolStripStatusLabel { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
@@ -70,8 +78,10 @@ namespace ZX81Compiler
 
             var menu = new MenuStrip();
             var file = new ToolStripMenuItem("&File");
-            file.DropDownItems.Add(new ToolStripMenuItem("&Open .p file...", null, (s, e) => Open(), Keys.Control | Keys.O));
-            file.DropDownItems.Add(new ToolStripMenuItem("&Save .p as... (after editing bytes)", null, (s, e) => SaveP(), Keys.Control | Keys.S));
+            file.DropDownItems.Add(new ToolStripMenuItem("&Open program or tape (.p .p81 .o .wav .tzx)...", null, (s, e) => Open(), Keys.Control | Keys.O));
+            file.DropDownItems.Add(new ToolStripMenuItem("&Save as .p...", null, (s, e) => SaveP(), Keys.Control | Keys.S));
+            file.DropDownItems.Add(new ToolStripSeparator());
+            file.DropDownItems.Add(new ToolStripMenuItem("&Run in Emulator", null, (s, e) => RunInEmulator(), Keys.Control | Keys.F5));
             file.DropDownItems.Add(new ToolStripSeparator());
             file.DropDownItems.Add(new ToolStripMenuItem("E&xit", null, (s, e) => Close()));
             var export = new ToolStripMenuItem("&Export");
@@ -84,13 +94,21 @@ namespace ZX81Compiler
             export.DropDownItems.Add(new ToolStripSeparator());
             export.DropDownItems.Add(new ToolStripMenuItem("Cassette audio for a real ZX81 (.wav)...", null, (s, e) => ExportTape(false)));
             export.DropDownItems.Add(new ToolStripMenuItem("Tape image (.tzx)...", null, (s, e) => ExportTape(true)));
+            export.DropDownItems.Add(new ToolStripMenuItem("Program with its tape name (.p81)...", null, (s, e) => ExportP81()));
+            export.DropDownItems.Add(new ToolStripMenuItem("ZX80 program (.o)...", null, (s, e) => ExportZx80()));
+            export.DropDownItems.Add(new ToolStripSeparator());
+            export.DropDownItems.Add(new ToolStripMenuItem("&Play Audio to ZX81...", null, (s, e) => PlayAudio()));
+            var options = new ToolStripMenuItem("&Options");
+            options.DropDownItems.Add(new ToolStripMenuItem("Configure &Emulator...", null, (s, e) => EmulatorUi.Configure(this)));
             var help = new ToolStripMenuItem("&Help");
             help.DropDownItems.Add(new ToolStripMenuItem("&About", null, (s, e) => MessageBox.Show(this,
-                ".P File Browser " + Versions.Show(Versions.Browser) + "\n\nInspect ZX81 .p files: system variables, memory map, BASIC listing, screen, variables, hex and Z80 disassembly, graphics; export to text, .wav and .tzx." + UiCommon.AboutText, "About")));
-            menu.Items.Add(file); menu.Items.Add(export); menu.Items.Add(help);
+                ".P File Browser " + Versions.Show(Versions.Browser) + "\n\nInspect ZX81 .p files: system variables, memory map, BASIC listing, screen, variables, hex and Z80 disassembly, graphics; open tapes (.wav, .tzx), .p81 and ZX80 .o files; export to text, .wav, .tzx, .p81 and .o; play the tape sound to a real ZX81; run in an emulator." + UiCommon.AboutText, "About")));
+            menu.Items.Add(file); menu.Items.Add(export); menu.Items.Add(options); menu.Items.Add(help);
 
             var tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
-            tools.Items.Add(new ToolStripButton("Open .p file...", null, (s, e) => Open()) { Font = new Font(Font, FontStyle.Bold) });
+            tools.Items.Add(new ToolStripButton("Open...", null, (s, e) => Open()) { Font = new Font(Font, FontStyle.Bold), ToolTipText = "Open a .p, .p81, ZX80 .o, .wav or .tzx file (Ctrl+O)" });
+            tools.Items.Add(new ToolStripButton("Run in Emulator  (Ctrl+F5)", null, (s, e) => RunInEmulator()));
+            tools.Items.Add(new ToolStripButton("Play Audio to ZX81", null, (s, e) => PlayAudio()) { ToolTipText = "Play the program as tape sound into a real ZX81's EAR socket" });
             tools.Items.Add(new ToolStripSeparator());
             tools.Items.Add(new ToolStripButton("Export .wav...", null, (s, e) => ExportTape(false)));
             tools.Items.Add(new ToolStripButton("Export .tzx...", null, (s, e) => ExportTape(true)));
@@ -104,7 +122,7 @@ namespace ZX81Compiler
             BuildGraphicsTab();
 
             var strip = new StatusStrip();
-            status.Text = "Open a ZX81 .p file (or drag one onto this window).";
+            status.Text = "Open a ZX81 program or tape: .p, .p81, ZX80 .o, .wav or .tzx (or drag one onto this window).";
             strip.Items.Add(status);
             Controls.Add(tabs);
             Controls.Add(tools);
@@ -120,19 +138,27 @@ namespace ZX81Compiler
 
         void Open()
         {
-            using (var d = new OpenFileDialog { Filter = "ZX81 programs (*.p;*.81;*.p81)|*.p;*.81;*.p81|All files (*.*)|*.*", Title = "Open a ZX81 program" })
+            using (var d = new OpenFileDialog { Filter = TapeFormats.OpenFilter, Title = "Open a ZX81 program or tape" })
                 if (d.ShowDialog(this) == DialogResult.OK) OpenFile(d.FileName);
         }
 
         public void OpenFile(string file)
         {
+            if (edited && MessageBox.Show(this, "You have edited bytes that aren't saved. Open another file anyway?", ".P File Browser", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+            var lp = UiCommon.OpenProgram(this, file);    // shows the error ([mm:ss.ms] for audio) itself
+            if (lp == null) return;
             try
             {
-                LoadInto(PFile.Load(file));
+                LoadInto(PFile.Load(lp.P));
                 path = file;
                 edited = false;
-                Text = ".P File Browser " + Versions.Show(Versions.Browser) + " - " + Path.GetFileName(file);
-                status.Text = Path.GetFileName(file) + ": " + p.Data.Length + " bytes, " + p.Lines.Count + " BASIC lines. " + p.AutoRunDescription() + ".";
+                converted = lp.Converted;
+                tapeName = lp.Format == "WAV audio" || lp.Format.StartsWith("TZX") || lp.Format.StartsWith(".p81") ? lp.Name : null;
+                loadNotes = lp.Notes.Count > 0 ? " (" + lp.Format + ": " + string.Join("; ", lp.Notes) + ")" : "";
+                Text = ".P File Browser " + Versions.Show(Versions.Browser) + " - " + Path.GetFileName(file) + (converted ? " (" + lp.Format + ")" : "");
+                status.Text = Path.GetFileName(file) + ": " + p.Data.Length + " bytes, " + p.Lines.Count + " BASIC lines. " + p.AutoRunDescription() + "." + loadNotes;
+                if (lp.Notes.Count > 1 || lp.Format.StartsWith("ZX80"))
+                    MessageBox.Show(this, "Opened " + Path.GetFileName(file) + " (" + lp.Format + "):\n\n  " + string.Join("\n  ", lp.Notes), ".P File Browser", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception e) { UiCommon.Error(this, "Could not open the file:\n" + e.Message); }
         }
@@ -165,12 +191,16 @@ namespace ZX81Compiler
 
         string Stem { get { return Path.GetFileNameWithoutExtension(path ?? "program"); } }
 
+        /// <summary>The name to give the program on tape: the one it had on the tape it came
+        /// from, else the file name.</summary>
+        string TapeName { get { return string.IsNullOrEmpty(tapeName) ? Stem.ToUpperInvariant() : tapeName; } }
+
         // ---------------- exports ----------------
         void SaveP()
         {
             if (!Ready()) return;
             string f = UiCommon.SaveBytes(this, p.Data, "Save .p file", "ZX81 program (*.p)|*.p|All files (*.*)|*.*", Stem + (edited ? "_edited.p" : ".p"));
-            if (f != null) { edited = false; status.Text = "Saved " + f; }
+            if (f != null) { edited = false; converted = false; path = f; status.Text = "Saved " + f; }
         }
 
         void ExportListing()
@@ -234,7 +264,7 @@ namespace ZX81Compiler
         void ExportTape(bool tzx)
         {
             if (!Ready()) return;
-            string name = Stem.ToUpperInvariant();
+            string name = TapeName;
             byte[] data = tzx ? Tape.MakeTzx(p.Data, name) : Tape.MakeWav(p.Data, name);
             string f = UiCommon.SaveBytes(this, data, tzx ? "Export tape image" : "Export cassette audio",
                 tzx ? "TZX tape image (*.tzx)|*.tzx" : "WAV audio (*.wav)|*.wav", Stem + (tzx ? ".tzx" : ".wav"));

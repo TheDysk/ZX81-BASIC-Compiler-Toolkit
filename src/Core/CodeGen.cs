@@ -55,6 +55,14 @@ namespace ZX81Compiler
         public bool LowerIsInverse = false;  // lower case letters in strings become inverse video
         public int MaxString = 255;          // capacity of ordinary string variables
         public bool MakeListing = true;      // produce an assembly listing
+        /// <summary>Strict integer mode (#STRICT_INT in the listing, or --strict-int): anything
+        /// that would need the ROM's floating-point calculator (a "float island": SIN, PI,
+        /// 0.5, VAL, RND on its own ...) is a compile error instead of floating point, so a
+        /// program is guaranteed to be all fast whole-number code.</summary>
+        public bool StrictInt;
+
+        /// <summary>A copy (the compiler may switch options on from directives in the listing).</summary>
+        public Options Clone() { return (Options)MemberwiseClone(); }
         /// <summary>RAM the program is compiled for: 16 (a 16K RAM pack, the default), 32 or
         /// 64. With 32 or 64 the code and screen stay below 8000h (a ZX81 can only run code
         /// and show the display there) and the variables go at 8000h and up.</summary>
@@ -168,6 +176,7 @@ namespace ZX81Compiler
                 try
                 {
                     NormStmt(ln.Stmt);
+                    if (opt.StrictInt) CheckStrict(ln.Stmt);
                     GenStmt(ln.Stmt, i);
                 }
                 catch (CompileError e)
@@ -745,6 +754,8 @@ namespace ZX81Compiler
                 Diags.Add(new Diagnostic { BasicLine = curLine, Message = "number " + txt + " is too big for a whole number (-32768 to 65535)" });
                 return (int)((long)r & 0xFFFF);
             }
+            if (r != c.Value && opt.StrictInt)
+                throw Err("the number " + txt + " is not a whole number (strict integer mode, #STRICT_INT, is on)");
             if (r != c.Value)
                 Diags.Add(new Diagnostic { BasicLine = curLine, Message = "number " + txt + " is not a whole number; a whole number is needed here, so it becomes " + r });
             return (int)r & 0xFFFF;
@@ -825,6 +836,40 @@ namespace ZX81Compiler
             var sv = e as StrVar; if (sv != null) { foreach (var x in sv.Args) { x.From = Norm(x.From, false); x.To = Norm(x.To, false); } return e; }
             var se = e as SliceExpr; if (se != null) { se.Base = Norm(se.Base, false); se.Arg.From = Norm(se.Arg.From, false); se.Arg.To = Norm(se.Arg.To, false); return e; }
             return e;
+        }
+
+        // ---------------- strict integer mode ----------------
+        /// <summary>#STRICT_INT: refuse any statement that contains a float island, naming
+        /// what caused it (the first floating-point part found).</summary>
+        void CheckStrict(Stmt s)
+        {
+            foreach (var e in StmtExprs(s))
+            {
+                string why = FloatCause(e);
+                if (why != null)
+                    throw Err(why + " needs floating point (the ROM calculator), but strict integer mode (#STRICT_INT) is on");
+            }
+        }
+
+        /// <summary>What makes e (or something inside it) floating point, as text; null if nothing does.</summary>
+        static string FloatCause(Expr e)
+        {
+            if (e == null) return null;
+            if (e is FloatLit) return "the number " + ((FloatLit)e).Value.ToString("G9", System.Globalization.CultureInfo.InvariantCulture);
+            if (e is PiConst) return "PI";
+            if (e is RndBare) return "RND on its own (a fraction from 0 to 1)";
+            var f = e as Func;
+            if (f != null && FloatMath.FloatFuncs.Contains(f.Name)) return f.Name;
+            var kids = new List<Expr>();
+            var b = e as Binary; if (b != null) { kids.Add(b.L); kids.Add(b.R); }
+            var u = e as Unary; if (u != null) kids.Add(u.A);
+            if (f != null) kids.Add(f.Arg);
+            var r = e as RndN; if (r != null) kids.Add(r.N);
+            var a = e as NumArr; if (a != null) kids.AddRange(a.Index);
+            var sv = e as StrVar; if (sv != null) foreach (var x in sv.Args) { kids.Add(x.From); kids.Add(x.To); }
+            var se = e as SliceExpr; if (se != null) { kids.Add(se.Base); kids.Add(se.Arg.From); kids.Add(se.Arg.To); }
+            foreach (var k in kids) { string w = FloatCause(k); if (w != null) return w; }
+            return null;
         }
 
         /// <summary>Does the statement use the ROM calculator or workspace?</summary>

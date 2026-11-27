@@ -35,6 +35,7 @@
 // =====================================================================================
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Globalization;
 using System.Text;
 
@@ -181,6 +182,26 @@ namespace ZX81Compiler
                 }
             }
             return lt;
+        }
+
+        /// <summary>Where the hidden numbers are in a line: the offset of each 7Eh marker in
+        /// the body (the 5 bytes of the number follow it), in the same order as the
+        /// {=value} annotations Detokenize writes. Strings and REM text are skipped.</summary>
+        public static List<int> HiddenNumberOffsets(byte[] body)
+        {
+            var r = new List<int>();
+            int end = body.Length;
+            if (end > 0 && body[end - 1] == 0x76) end--;
+            bool inStr = false;
+            for (int i = 0; i < end; i++)
+            {
+                int c = body[i];
+                if (!inStr && c == 0xEA) break;                 // REM: the rest isn't tokenised
+                if (c == 0x0B) { inStr = !inStr; continue; }
+                if (inStr) continue;
+                if (c == 0x7E && i + 5 <= end) { r.Add(i); i += 5; }
+            }
+            return r;
         }
 
         static bool SameBytes(byte[] a, byte[] b)
@@ -727,6 +748,39 @@ namespace ZX81Compiler
             var file = new List<byte>(sv);
             file.AddRange(prog);
             return file.ToArray();
+        }
+
+        /// <summary>The file with the text after REM in the given line replaced by bin; null
+        /// (and why) if it can't be done. why also gets any warning.</summary>
+        public static byte[] InjectRem(PFile p, int lineNumber, byte[] bin, out string why)
+        {
+            why = "";
+            var line = p.Lines.FirstOrDefault(l => l.Number == lineNumber);
+            if (line == null) { why = "There is no line " + lineNumber + "."; return null; }
+            if (line.Body.Length == 0 || line.Body[0] != 0xEA) { why = "Line " + lineNumber + " doesn't start with REM."; return null; }
+            if (bin.Length == 0) { why = "The file is empty."; return null; }
+            if (bin.Length + 2 > 0xFFFF) { why = "The file is too big for one BASIC line (" + bin.Length + " bytes)."; return null; }
+            var auto = p.AutoRunLine;
+            var lines = new List<KeyValuePair<int, byte[]>>();
+            foreach (var l in p.Lines)
+            {
+                byte[] body = l.Body;
+                if (l == line)
+                {
+                    body = new byte[bin.Length + 2];
+                    body[0] = 0xEA;
+                    Array.Copy(bin, 0, body, 1, bin.Length);
+                    body[body.Length - 1] = 0x76;
+                }
+                lines.Add(new KeyValuePair<int, byte[]>(l.Number, body));
+            }
+            byte[] data = Basic81.BuildP(lines, p, true, true, auto != null ? auto.Number : -1);
+            int moved = bin.Length + 2 - line.Length;
+            if (moved != 0 && p.Lines.Last() != line)
+                why = " The lines after it moved by " + moved + " bytes, so machine code elsewhere that uses fixed addresses after line " + lineNumber + " may need changing.";
+            if (Array.IndexOf(bin, (byte)0x76) >= 0)
+                why += " (The binary contains 76h, which ends the line when it is LISTed on the ZX81; it still runs.)";
+            return data;
         }
     }
 }

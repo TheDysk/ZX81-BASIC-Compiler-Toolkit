@@ -1,7 +1,8 @@
 // =====================================================================================
 //  DecompilerForm.cs - the Windows decompiler (ZX81Decompiler.exe)
 // -------------------------------------------------------------------------------------
-//  Open a .p file (button, File menu, drag and drop, or command line). Four tabs:
+//  Open a .p file (button, File menu, drag and drop, or command line) - or a tape (.wav
+//  recording, .tzx), a .p81, or a ZX80 .o / .80 program (converted to ZX81 BASIC). Four tabs:
 //     Listing   the BASIC exactly as stored (editable)
 //     BASIC     the BASIC rebuilt from machine code, for programs made by the
 //               ZX81 BASIC compiler (editable; empty otherwise)
@@ -63,7 +64,7 @@ namespace ZX81Compiler
 
             var menu = new MenuStrip();
             var file = new ToolStripMenuItem("&File");
-            file.DropDownItems.Add(new ToolStripMenuItem("&Open .p file...", null, (s, e) => Open(), Keys.Control | Keys.O));
+            file.DropDownItems.Add(new ToolStripMenuItem("&Open program or tape (.p .p81 .o .wav .tzx)...", null, (s, e) => Open(), Keys.Control | Keys.O));
             file.DropDownItems.Add(new ToolStripMenuItem("Save &listing (.txt)...", null, (s, e) => SaveListing()));
             file.DropDownItems.Add(new ToolStripMenuItem("Save rebuilt &BASIC (.bas)...", null, (s, e) => SaveBasic()));
             file.DropDownItems.Add(new ToolStripMenuItem("Save &machine code (.asm)...", null, (s, e) => SaveAsm()));
@@ -77,7 +78,7 @@ namespace ZX81Compiler
             menu.Items.Add(file); menu.Items.Add(help);
 
             var tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
-            tools.Items.Add(new ToolStripButton("Open .p file...", null, (s, e) => Open()) { Font = new Font(Font, FontStyle.Bold) });
+            tools.Items.Add(new ToolStripButton("Open...", null, (s, e) => Open()) { Font = new Font(Font, FontStyle.Bold), ToolTipText = "Open a .p, .p81, ZX80 .o, .wav or .tzx file (Ctrl+O)" });
             tools.Items.Add(new ToolStripSeparator());
             tools.Items.Add(new ToolStripButton("Save listing...", null, (s, e) => SaveListing()));
             tools.Items.Add(new ToolStripButton("Save BASIC...", null, (s, e) => SaveBasic()));
@@ -102,7 +103,7 @@ namespace ZX81Compiler
             tabs.TabPages.AddRange(new[] { pageReport, pageListing, pageBasic, pageAsm });
 
             var strip = new StatusStrip();
-            status = new ToolStripStatusLabel("Open a ZX81 .p file (or drag one onto this window).") { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
+            status = new ToolStripStatusLabel("Open a ZX81 program or tape: .p, .p81, ZX80 .o, .wav or .tzx (or drag one onto this window).") { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
             strip.Items.Add(status);
 
             Controls.Add(tabs);
@@ -116,18 +117,23 @@ namespace ZX81Compiler
 
         void Open()
         {
-            using (var d = new OpenFileDialog { Filter = "ZX81 programs (*.p;*.81;*.p81)|*.p;*.81;*.p81|All files (*.*)|*.*", Title = "Open a ZX81 program" })
+            using (var d = new OpenFileDialog { Filter = TapeFormats.OpenFilter, Title = "Open a ZX81 program or tape" })
                 if (d.ShowDialog(this) == DialogResult.OK) OpenFile(d.FileName);
         }
 
         /// <summary>Decompile a file and fill the tabs.</summary>
         public void OpenFile(string file)
         {
+            Cursor = Cursors.WaitCursor;
+            var lp = UiCommon.OpenProgram(this, file);   // shows the error itself ([mm:ss.ms] for a recording)
+            Cursor = Cursors.Default;
+            if (lp == null) return;
             try
             {
                 Cursor = Cursors.WaitCursor;
-                var p = PFile.Load(file);
+                var p = PFile.Load(lp.P);
                 result = Decompiler.Run(p, Path.GetFileName(file));
+                if (lp.Converted) result.Report = "Opened from " + Path.GetFileName(file) + " (" + lp.Format + "):\n  " + string.Join("\n  ", lp.Notes) + "\n\n" + result.Report;
                 path = file;
                 listing.Text = UiCommon.Crlf(result.Listing);
                 basic.Text = UiCommon.Crlf(result.Basic ?? "# This program wasn't made by the ZX81 BASIC Compiler, so there is no BASIC to rebuild from machine code.\n# The Listing tab has the BASIC as stored, with any machine code kept as \\hh escapes.");
@@ -136,7 +142,8 @@ namespace ZX81Compiler
                 Text = "ZX81 Decompiler " + Versions.Show(Versions.Decompiler) + " - " + Path.GetFileName(file);
                 tabs.SelectedTab = result.Basic != null ? pageBasic : pageListing;
                 status.Text = Path.GetFileName(file) + ": " + p.Lines.Count + " lines; " + p.AutoRunDescription() +
-                    (result.Recovered.Success ? (result.Recovered.Verified ? "; BASIC rebuilt and verified" : "; BASIC rebuilt") : "");
+                    (result.Recovered.Success ? (result.Recovered.Verified ? "; BASIC rebuilt and verified" : "; BASIC rebuilt") : "") +
+                    (lp.Converted ? " (read from " + lp.Format + " - see the Report tab)" : "");
             }
             catch (Exception e) { UiCommon.Error(this, "Could not decompile the file:\n" + e.Message); }
             finally { Cursor = Cursors.Default; }
@@ -196,7 +203,13 @@ namespace ZX81Compiler
         }
 
         const string HelpText =
-@"LISTING (AS STORED)
+@"OPENING
+.p, .81 and .p81 files, tapes - a .wav recording of a ZX81 tape (8 or 16-bit,
+mono or stereo) or a .tzx image - and ZX80 programs (.o, .80), which are converted
+to ZX81 BASIC. If a recording can't be read, the message gives the time in it
+[minutes:seconds.milliseconds] where it went wrong.
+
+LISTING (AS STORED)
 The BASIC exactly as it is stored in the file. Anything that can't be written as
 ordinary BASIC text - such as machine code hidden in REM lines - is written as \hh
 escapes (one byte in hex), so 'Make .p' turns the text back into the same bytes.

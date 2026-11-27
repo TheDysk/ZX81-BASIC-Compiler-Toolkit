@@ -50,6 +50,7 @@ namespace ZX81Compiler
         public List<Diagnostic> Diagnostics = new List<Diagnostic>();   // errors and warnings
         public int CodeSize, VarsAddress, VarsSize, ProgramLines;       // figures for the summary
         public int Ram = 16;              // RAM the program was compiled for (Options.Ram)
+        public bool StrictInt;            // strict integer mode was on (option or #STRICT_INT)
         public int MemoryEnd;             // first byte after the variables (0 if the layout wasn't reached)
         public bool UsesCalc;             // uses the ROM calculator (extra room after E_LINE)
         /// <summary>Summary shown after a successful compile: several lines (sizes in bytes
@@ -71,6 +72,11 @@ namespace ZX81Compiler
         public static CompileResult Compile(string text, Options opt)
         {
             var res = new CompileResult();
+            // directives: a line #STRICT_INT switches strict integer mode on
+            opt = opt.Clone();
+            foreach (string raw in text.Replace("\r", "").Split('\n'))
+                if (raw.Trim().ToUpperInvariant() == "#STRICT_INT") opt.StrictInt = true;
+            res.StrictInt = opt.StrictInt;
             var lines = ParseProgram(text, opt, res.Diagnostics);
             res.ProgramLines = lines.Count;
             if (res.Diagnostics.Any(d => d.IsError)) return res;
@@ -133,7 +139,7 @@ namespace ZX81Compiler
             res.PFile = BuildPFile(code, opt.Autorun);
             res.Success = true;
             res.ProgramLines = lines.Count;
-            res.Summary = string.Format("Compiled {0} BASIC lines for a ZX81 with {1}K RAM.", lines.Count, opt.Ram) + "\n" +
+            res.Summary = string.Format("Compiled {0} BASIC lines for a ZX81 with {1}K RAM{2}.", lines.Count, opt.Ram, opt.StrictInt ? ", strict integer mode (no floating point)" : "") + "\n" +
                 SizeLines(res) + "\n" + ".p file: " + Size(res.PFile.Length) + ".";
             return res;
         }

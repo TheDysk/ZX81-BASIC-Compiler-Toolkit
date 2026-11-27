@@ -29,7 +29,8 @@ namespace ZX81Compiler
         /// <summary>Run the compiler with command-line arguments, writing messages to outw.</summary>
         public static int Run(string[] args, TextWriter outw)
         {
-            string input = null, output = null, asmFile = null;
+            string input = null, output = null, asmFile = null, emulator = null;
+            bool run = false;
             var opt = new Options();
             // Options can appear anywhere; the first other argument is the input file and
             // the second the output file.
@@ -47,6 +48,9 @@ namespace ZX81Compiler
                         if (opt.Ram != 16 && opt.Ram != 32 && opt.Ram != 64) { outw.WriteLine("--ram must be 16, 32 or 64"); return 1; }
                         break;
                     case "--asm": asmFile = args[++i]; break;
+                    case "--strict-int": opt.StrictInt = true; break;          // like #STRICT_INT in the listing
+                    case "--run": run = true; break;                           // start the emulator afterwards
+                    case "--emulator": emulator = args[++i]; run = true; break; // ... this one (not saved)
                     case "--version":
                         outw.WriteLine("zx81c - ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler));
                         return 0;
@@ -54,7 +58,10 @@ namespace ZX81Compiler
                     case "--help":
                     case "/?":
                         outw.WriteLine("zx81c - ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler));
-                        outw.WriteLine("Usage: zx81c input.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--asm listing.asm]");
+                        outw.WriteLine("Usage: zx81c input.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--strict-int] [--asm listing.asm] [--run] [--emulator path]");
+                        outw.WriteLine("  --strict-int   no floating point: SIN, PI, 0.5, VAL ... are errors (same as a #STRICT_INT line)");
+                        outw.WriteLine("  --run          start the emulator set up in " + ToolConfig.FileName + " with the new .p file");
+                        outw.WriteLine("  --emulator P   start emulator P instead (for this run only)");
                         return 0;
                     default:
                         if (input == null) input = a; else output = a;
@@ -77,6 +84,22 @@ namespace ZX81Compiler
             if (asmFile != null && res.Listing != null) File.WriteAllText(asmFile, res.Listing + res.Symbols);
             outw.WriteLine(res.Summary);
             outw.WriteLine("Written " + output);
+            if (run)
+            {
+                // start the emulator with the new file
+                var cfg = ToolConfig.Load();
+                if (emulator != null) cfg.EmulatorPath = emulator;
+                try
+                {
+                    cfg.RunInEmulator(output);
+                    outw.WriteLine("Started " + cfg.EmulatorPath + " " + cfg.ArgumentsFor(output));
+                }
+                catch (InvalidOperationException e)
+                {
+                    outw.WriteLine(e.Message.Replace("Options > Configure Emulator", "the compiler's Options > Configure Emulator, or --emulator path"));
+                    return 3;   // compiled, but couldn't run it
+                }
+            }
             return 0;
         }
 

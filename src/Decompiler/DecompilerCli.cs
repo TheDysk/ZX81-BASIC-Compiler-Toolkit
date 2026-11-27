@@ -2,6 +2,8 @@
 //  DecompilerCli.cs - command-line decompiler (zx81dc.exe)
 // -------------------------------------------------------------------------------------
 //  zx81dc program.p [options]
+//    The input can also be a tape or another format: .wav (a recording of a ZX81 tape),
+//    .tzx, .p81, or a ZX80 program (.o / .80, converted to ZX81 BASIC).
 //    --txt  file   BASIC listing exactly as stored (default: program.txt)
 //    --basic file  BASIC rebuilt from machine code, for programs made by the
 //                  ZX81 BASIC compiler (default: program.bas when available)
@@ -9,8 +11,10 @@
 //    --p    file   a .p file made from the decompiled text (default: not made)
 //    --p-from listing|basic   which text the .p is made from (default: basic if
 //                  rebuilt, else listing)
+//    --extract file  write the program as read from the input (e.g. a .wav) as a .p file
 //    --report      print the analysis report
-//  Exit codes: 0 = done, 1 = could not read the file, 2 = bad arguments.
+//  Exit codes: 0 = done, 1 = could not read the file (a tape that can't be decoded is
+//  reported with the [mm:ss.ms] time where it went wrong), 2 = bad arguments.
 // =====================================================================================
 using System;
 using System.Collections.Generic;
@@ -35,7 +39,7 @@ namespace ZX81Compiler
     {
         public static int Main(string[] args)
         {
-            string input = null, txt = null, basic = null, asm = null, pout = null, pFrom = null;
+            string input = null, extract = null, txt = null, basic = null, asm = null, pout = null, pFrom = null;
             bool report = false;
             try
             {
@@ -49,6 +53,7 @@ namespace ZX81Compiler
                         case "--p": pout = args[++i]; break;
                         case "--p-from": pFrom = args[++i].ToLowerInvariant(); break;
                         case "--report": report = true; break;
+                        case "--extract": extract = args[++i]; break;
                         case "-h": case "--help": case "/?": Usage(); return 0;
                         case "--version": Console.WriteLine("zx81dc - ZX81 Decompiler " + Versions.Show(Versions.Decompiler)); return 0;
                         default:
@@ -61,10 +66,23 @@ namespace ZX81Compiler
             if (input == null) { Usage(); return 2; }
 
             PFile p;
-            try { p = PFile.Load(input); }
+            LoadedProgram lp;
+            try { lp = TapeFormats.Load(input); p = PFile.Load(lp.P); }
+            catch (TapeDecodeException e) { Console.WriteLine("Could not read the tape in " + input + ": " + e.Message); return 1; }
             catch (Exception e) { Console.WriteLine("Could not read " + input + ": " + e.Message); return 1; }
             string name = Path.GetFileName(input);
+            if (lp.Converted)
+            {
+                Console.WriteLine("Read " + name + " (" + lp.Format + "):");
+                foreach (var n in lp.Notes) Console.WriteLine("  " + n);
+            }
+            if (extract != null)
+            {
+                File.WriteAllBytes(extract, lp.P);
+                Console.WriteLine("Written " + extract + " (the program as read, " + lp.P.Length + " bytes)");
+            }
             var r = Decompiler.Run(p, name);
+            if (lp.Converted) r.Report = "Opened from " + name + " (" + lp.Format + "):\n  " + string.Join("\n  ", lp.Notes) + "\n\n" + r.Report;
             string stem = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(input)), Path.GetFileNameWithoutExtension(input));
 
             if (txt == null) txt = stem + ".txt";
@@ -103,7 +121,10 @@ namespace ZX81Compiler
         static void Usage()
         {
             Console.WriteLine("zx81dc - ZX81 Decompiler " + Versions.Show(Versions.Decompiler));
-            Console.WriteLine("Usage: zx81dc program.p [--txt file] [--basic file] [--asm file] [--p file] [--p-from listing|basic] [--report]");
+            Console.WriteLine("Usage: zx81dc program.p [--txt file] [--basic file] [--asm file] [--p file] [--p-from listing|basic] [--extract file] [--report]");
+            Console.WriteLine("  The input can be a .p, .81 or .p81 file, a tape (.wav recording or .tzx image)");
+            Console.WriteLine("  or a ZX80 program (.o, .80), which is converted to ZX81 BASIC.");
+            Console.WriteLine("  --extract file writes the program as read (e.g. from a .wav) as a .p file.");
             Console.WriteLine("  Writes the BASIC listing (.txt), rebuilt BASIC for compiled programs (.bas),");
             Console.WriteLine("  machine code (.asm), and optionally a new .p file made from the text.");
         }

@@ -5,8 +5,8 @@ Three Windows tools for **Sinclair ZX81** programs and `.p` files:
 | Tool | What it does |
 |---|---|
 | **ZX81 BASIC Compiler** | Compiles a ZX81 BASIC text listing into fast **Z80 machine code** and saves a ready-to-load `.p` file. |
-| **ZX81 Decompiler** | Reads a `.p` file, finds the BASIC and any machine code, and writes it back out as a BASIC text listing, a new `.p` file and a Z80 `.asm` listing. For programs made by the compiler it also rebuilds the original BASIC. |
-| **.P File Browser** | Looks inside a `.p` file: system variables, memory map, listing, screen, variables, hex editor with Z80 disassembly, graphics ripper, and export to text, `.wav` and `.tzx`. |
+| **ZX81 Decompiler** | Reads a `.p` file (or a tape: `.wav`, `.tzx`, `.p81`, or a ZX80 `.o`), finds the BASIC and any machine code, and writes it back out as a BASIC text listing, a new `.p` file and a Z80 `.asm` listing. For programs made by the compiler it also rebuilds the original BASIC. |
+| **.P File Browser** | Looks inside a `.p` file or tape: system variables, memory map, listing, screen, variables, hex editor with Z80 disassembly, graphics ripper; edits hidden numbers and REM machine code; exports to text, `.wav`, `.tzx`, `.p81` and ZX80 `.o`; plays the tape sound to a real ZX81; runs the program in an emulator. |
 
 A compiled program looks like this on the ZX81:
 
@@ -31,6 +31,18 @@ Build the tools yourself (below), or take the executables from a release. They n
 
 All three GUIs accept files dragged onto their windows.
 
+### Emulator set-up
+
+The compiler (**Compile & Run**, Ctrl+F5, or `zx81c --run`) and the browser (**Run in Emulator**, Ctrl+F5) can start an emulator such as EightyOne with the program. Choose it once with **Options → Configure Emulator...** in either program: the emulator's `.exe` and its arguments, where `{file}` stands for the `.p` file (the default is `"{file}"`). The settings are saved in `ZX81Toolset.ini` next to the programs, or in `%APPDATA%\ZX81Toolset\ZX81Toolset.ini` if that folder can't be written to:
+
+```ini
+[Emulator]
+Path=C:\Emulators\EightyOne\EightyOne.exe
+Arguments="{file}"
+```
+
+The environment variable `ZX81TOOLSET_INI` can point at another settings file.
+
 ## The compiler
 
 ### Features
@@ -42,6 +54,8 @@ All three GUIs accept files dragged onto their windows.
 - Compiled programs write straight to the display file, so they are much faster than interpreted BASIC.
 - Floating-point maths is done by the ZX81 ROM's own calculator, only where a program needs it (see below). Everything else stays fast 16-bit whole-number code.
 - The machine code (line 0) needs nothing but the ZX81 ROM: keyboard, FAST/SLOW, the calculator, the printer and the tape routines.
+- **Compile & Run** (Ctrl+F5) saves the `.p` file and starts the emulator (see [Emulator set-up](#emulator-set-up)).
+- **Strict integer mode** (`#STRICT_INT`, the **Strict integer** tick box or `--strict-int`) refuses anything that would need floating point, so a program is guaranteed to be all fast code.
 - Programs can be compiled for a 16K, 32K or 64K RAM pack. With 32K or 64K, the variables, arrays and strings use the RAM above 32K (see [RAM packs](#ram-packs-16k-32k-and-64k)).
 
 ### Using the compiler
@@ -63,7 +77,7 @@ If a program doesn't fit, the sizes are still shown with the error.
 Command line:
 
 ```
-zx81c listing.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--asm listing.asm]
+zx81c listing.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--strict-int] [--asm listing.asm] [--run] [--emulator path]
 ```
 
 | Option | Meaning |
@@ -73,7 +87,10 @@ zx81c listing.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--ma
 | `--lower-inverse` | Lower-case letters inside strings become inverse video |
 | `--maxstr N` | Capacity of ordinary string variables, 1–255 (default 255). Lower it if memory runs out. |
 | `--ram 16\|32\|64` | The RAM pack the program is for (default 16). See [RAM packs](#ram-packs-16k-32k-and-64k). In the GUI this is the **RAM** box. |
+| `--strict-int` | Strict integer mode: floating point is an error (see [below](#strict-integer-mode)) |
 | `--asm file` | Also write the generated assembly listing |
+| `--run` | After a successful compile, start the emulator set up in `ZX81Toolset.ini` with the `.p` file. Exit code 3 if it can't be started. |
+| `--emulator path` | Start this emulator instead (implies `--run`; not saved) |
 
 ### Listing format
 
@@ -137,6 +154,15 @@ Line 40 prints `0.84147099 1.4142136 3.5`, as on a ZX81.
 - A maths error such as `SQR -1` or `LN 0` stops the program with the ZX81 report code (`A/10`: the program runs from line 10).
 - `VAL` works out any expression in its string, e.g. `VAL "2*3.5"` is 7. It can't see the program's variables, because those are kept outside BASIC.
 
+### Strict integer mode
+
+A line `#STRICT_INT` anywhere in the listing (or `--strict-int`, or the **Strict integer** tick box) turns floating point off. Everything that would start a float island is then a compile error naming the line and the cause: `SIN`, `COS` … `PI`, `VAL`, `RND` on its own, and numbers that aren't whole (`2.5`). A whole number written with a decimal point, like `34.0`, is allowed. Use it for games and other programs that must stay fast: nothing slow can creep in unnoticed.
+
+```
+ERROR  Line 10: SIN needs floating point (the ROM calculator), but strict integer mode (#STRICT_INT) is on
+ERROR  Line 40: the number 2.5 is not a whole number (strict integer mode, #STRICT_INT, is on)
+```
+
 ### RAM packs: 16K, 32K and 64K
 
 There were RAM packs for the ZX81 giving 32K (RAM from 4000h to BFFFh) and 64K (usable RAM from 4000h to FFFFh, plus 2000h–3FFFh on some packs). The ZX81 hardware limits what the RAM above 32K (8000h) can be used for. There, the video circuit turns most instruction fetches into NOPs, so the ZX81 can't run machine code there, and the display file has to be below 32K as well. That RAM can only hold data. And when it is switched on, the ROM only uses RAM up to 8000h (RAMTOP); BASIC only uses more after `POKE 16389,192` (32K) and `NEW`.
@@ -179,7 +205,7 @@ The decompiler takes any `.p` file and turns it back into text you can read, edi
 
 ### Using the decompiler
 
-GUI: open a `.p` file (Ctrl+O, or drag it onto the window). The tabs show:
+GUI: open a `.p` file (Ctrl+O, or drag it onto the window). Tapes and the other formats in [Tapes, .p81 and ZX80 files](#tapes-p81-and-zx80-files) open the same way; the Report tab then starts with where the program came from (for a `.wav`, the time it was found in the recording). The tabs show:
 
 | Tab | Contents |
 |---|---|
@@ -193,8 +219,10 @@ The **File** menu saves the listing (`.txt`), the rebuilt BASIC (`.bas`) and the
 Command line:
 
 ```
-zx81dc program.p [--txt file] [--basic file] [--asm file] [--p file] [--p-from listing|basic] [--report]
+zx81dc program.p [--txt file] [--basic file] [--asm file] [--p file] [--p-from listing|basic] [--extract file] [--report]
 ```
+
+The input can also be a `.wav` recording, a `.tzx`, a `.p81` or a ZX80 `.o`/`.80` file. If a recording can't be read, `zx81dc` prints where it went wrong, e.g. `[00:03.400] the recording ends in the middle of the program (107 of 1893 program bytes read)`, and exits with code 1.
 
 With no options it writes `program.txt`, plus `program.bas` if the BASIC could be rebuilt and `program.asm` if there is machine code.
 
@@ -205,6 +233,7 @@ With no options it writes `program.txt`, plus `program.bas` if the BASIC could b
 | `--asm file` | Write the machine code listing here |
 | `--p file` | Also write a new `.p` file |
 | `--p-from listing\|basic` | Make that `.p` from the listing (default) or from the rebuilt BASIC |
+| `--extract file` | Write the program exactly as read from the input as a `.p` file (e.g. to turn a `.wav` into a `.p`) |
 | `--report` | Print the report |
 
 Limits:
@@ -214,7 +243,7 @@ Limits:
 
 ## The .P File Browser
 
-Open a `.p` file (Ctrl+O, or drag it onto the window). The tabs:
+Open a `.p` file (Ctrl+O, or drag it onto the window), or a tape or other format (see [below](#tapes-p81-and-zx80-files)). If a `.wav` can't be read, a message says what went wrong and when in the recording, as `[mm:ss.ms]`. The tabs:
 
 - **Overview**
   - *Auto-run detector:* whether the program starts by itself after LOAD and at which line (from `NXTLIN`).
@@ -222,6 +251,8 @@ Open a `.p` file (Ctrl+O, or drag it onto the window). The tabs:
   - *Memory map:* a coloured bar and a table of the regions: system variables, each BASIC line, the display file, the variables and the edit line. The free memory and stack are worked out for a 1K, 2K, 4K or 16K machine, or a 32K or 64K RAM pack. RAMTOP isn't saved in a `.p` file, so you choose the machine; the Browser picks the smallest that fits. For programs compiled for 32K/64K, the map shows their variables above 32K.
   - *Warnings* for anything a real ZX81 can't do with the file, whatever RAM is fitted: a display file above 32K, machine code above 32K, or a file that needs RAMTOP raised before loading.
 - **Listing:** the BASIC with ZX81 characters translated: keywords, inverse video (shown highlighted) and block graphics as Unicode. The hidden 5-byte numbers that follow every number in a line are hidden by default; a tick box shows them as `{=value}` and marks with `!` any that differ from the digits shown, a common trick. Machine code in `REM` lines is shown as Z80 instructions.
+  - *Edit a hidden number:* with the hidden numbers shown, double-click a `{=value}` (or right-click it). Type a new value or the 5 bytes in hex; only the hidden number changes, not the digits in the listing, which is exactly the trick some programs use.
+  - *Inject Binary into REM:* right-click a `REM` line and choose a `.bin` file. Everything after the `REM` is replaced by the file's bytes, and the lines after it, the display file and the variables move along, with `D_FILE`, `DF_CC`, `VARS`, `E_LINE`, `NXTLIN` and the other pointers worked out again. The status bar says where the code now starts (16514 for the first line). Injecting the same bytes back gives an identical file.
 - **Screen:** the display file drawn as the ZX81 would show it (32×24), at a choice of sizes. Collapsed 1K display files are handled. Save it as a picture or as text.
 - **Variables:** every variable saved with the program, decoded: numbers, strings, arrays and FOR loops (with their limit, step and loop line).
 - **Hex / Z80:** a hex editor and a Z80 disassembly side by side, kept in step. Traced machine code is shown in green. ROM routines and system variables are labelled, and the bytes after `RST 28h` and `RST 08h` are explained (calculator operations, error reports). Go to any address, edit bytes (double-click a row), then **Save .p as**.
@@ -234,7 +265,29 @@ The **Export** menu has:
 - a Z80 disassembly (`.asm`);
 - the screen as `.png` or text;
 - cassette audio (`.wav`) to play into a real ZX81's EAR socket after typing `LOAD ""`;
-- a `.tzx` tape image for emulators.
+- a `.tzx` tape image for emulators;
+- a `.p81` file (the program with its tape name);
+- a ZX80 program (`.o`), when the program only uses what a ZX80 has (see below);
+- **Play Audio to ZX81** (also on the toolbar): plays the tape sound through the computer's sound output, with a progress bar and a Stop button. Connect it to the ZX81's EAR socket, type `LOAD ""`, then press Play.
+
+**Run in Emulator** (Ctrl+F5, File menu and toolbar) starts the emulator set up in [Options → Configure Emulator](#emulator-set-up). An unchanged `.p` file is run from where it is; an edited program, or one opened from a tape, is run from a temporary copy.
+
+Edited programs are saved with **File → Save as .p**.
+
+## Tapes, .p81 and ZX80 files
+
+Both the decompiler and the browser open these as well as `.p` and `.81` files:
+
+| Format | Notes |
+|---|---|
+| `.wav` | A recording of a ZX81 tape (or one made by the browser). 8, 16, 24 or 32-bit PCM or 32-bit float, mono or stereo (the channels are mixed), any sample rate from about 11 kHz. The decoder follows the signal's level, so quiet recordings, a DC offset, inverted polarity, noise and tape running a little fast or slow are fine. If a recording can't be read, the error gives the time where it went wrong as `[mm:ss.ms]`: where the signal was lost, a bit that can't be read, or where the recording ends in the middle of the program. |
+| `.tzx` | Tape images: standard (10h), turbo (11h), pure data (14h), generalized data (19h, the ZX81 format) and direct recording (15h) blocks. Other blocks are skipped. |
+| `.p81` | The tape name followed by the `.p` data. |
+| `.o`, `.80` | ZX80 (4K ROM) programs. They are converted to ZX81 BASIC: tokens and characters are translated, `RND(n)` becomes `(1+INT (RND*(n)))` and the variables are kept. ZX80 BASIC is whole-number only, so compile the result with the compiler (rather than running it as ZX81 BASIC) to keep the ZX80's arithmetic. |
+
+If a tape holds several programs, the first is opened and the others are listed.
+
+Exporting to a ZX80 `.o` file works the other way, for programs that only use what a ZX80 has: no `PLOT`, `SIN` and other floating-point functions, no numbers with a decimal point, line numbers up to 9999. Every line that can't be converted is listed. Variables that a ZX80 can't hold are left out, with a note.
 
 
 ## Building from source
@@ -276,7 +329,11 @@ Output goes to `build/`: all five executables.
 - decompiles every compiled test program, checks that the rebuilt BASIC recompiles to identical code, and checks that each listing turns back into an identical `.p` file;
 - runs the 32K and 64K test programs on emulated 64K, 32K and 16K machines, and with RAMTOP raised. They must run, or show `NEEDS 32K RAM` / `NEEDS 64K RAM` on machines without enough RAM;
 - builds large BASIC `.p` files for 32K and 64K packs (`tests/mkbig.py`: saved arrays past 32K and 48K, machine code at 40000, a display file above 32K) and checks they round-trip and get the right RAM estimate and warnings;
-- makes a `.wav` and a `.tzx` and decodes them again.
+- checks strict integer mode (a whole-number program compiles identically with `#STRICT_INT`; a floating-point one is refused) and `--run` with a stand-in emulator;
+- turns `.p` files into `.wav`, `.tzx` and `.p81` and back, byte for byte, in the C# test `tests/cs/TapeTest.cs` and again through `zx81dc --extract`. The `.wav` tests include 8-bit stereo, 24-bit and float recordings, inverted, quiet, noisy and fast ones;
+- damages recordings (a dropout, a burst of noise, a cut-off end, silence) and checks each is reported at the right `[mm:ss.ms]` time;
+- converts ZX81 programs to ZX80 `.o` files and back, and a hand-made ZX80 file to ZX81 BASIC;
+- injects binaries of other sizes into `REM` lines and checks the system variables, and that putting the original back gives an identical file; checks the hidden-number positions match the listing.
 
 ```sh
 pip install z80
@@ -294,7 +351,8 @@ The harness doesn't emulate the display hardware or real tape and printer signal
 
 ```
 src/Core/        shared code: compiler, .p file reader, listing, Z80 disassembler,
-                 machine code finder, BASIC recovery, tape output
+                 machine code finder, BASIC recovery, tape writing and reading
+                 (.wav/.tzx/.p81), ZX80 conversion, emulator settings
 src/Compiler/    compiler GUI and command line
 src/Decompiler/  decompiler GUI and command line
 src/Browser/     .P File Browser

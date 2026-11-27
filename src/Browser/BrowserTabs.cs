@@ -179,13 +179,20 @@ namespace ZX81Compiler
             chkCode.CheckedChanged += (s, e) => { if (p != null) FillListing(); };
             row.Controls.Add(chkFloats); row.Controls.Add(chkCode);
             rtb = new RichTextBox { Dock = DockStyle.Fill, ReadOnly = true, WordWrap = false, Font = UiCommon.Mono(10f), BackColor = Color.White, DetectUrls = false };
+            rtb.MouseDoubleClick += (s, e) => ListingDoubleClick(e.Location);
+            rtb.ContextMenuStrip = ListingMenu();
             page.Controls.Add(rtb);
             page.Controls.Add(row);
             tabs.TabPages.Add(page);
         }
 
+        /// <summary>For each row of the listing view, the BASIC line it belongs to (the Z80
+        /// rows under a REM line belong to that line). Used by double-click and right-click.</summary>
+        readonly List<PLine> listingRows = new List<PLine>();
+
         void FillListing()
         {
+            listingRows.Clear();
             var o = new DetokOptions { Style = ListStyle.Display, ShowFloats = chkFloats.Checked, SummariseCodeRems = true };
             var rtf = new Rtf();
             foreach (var l in p.Lines)
@@ -194,7 +201,7 @@ namespace ZX81Compiler
                 rtf.Text(l.Number.ToString().PadLeft(5) + " ", Rtf.Gray);
                 bool showCode = lt.IsCodeRem && chkCode.Checked;
                 AppendColoured(rtf, lt);
-                rtf.NewLine();
+                rtf.NewLine(); listingRows.Add(l);
                 if (showCode)
                 {
                     int s = l.BodyAddr + 1, e = Math.Min(l.End - 1, p.FileEnd);
@@ -205,12 +212,12 @@ namespace ZX81Compiler
                         if (shown++ == MaxCodeRows)
                         {
                             rtf.Text("        ... " + (rows.Count - MaxCodeRows) + " more rows - see the Hex / Z80 disassembly tab", Rtf.Gray);
-                            rtf.NewLine();
+                            rtf.NewLine(); listingRows.Add(l);
                             break;
                         }
                         rtf.Text("        " + r.Addr.ToString("X4") + "  " + r.Bytes.PadRight(12) + "  " + r.Text.PadRight(24), r.Traced ? Rtf.Green : Rtf.Olive);
                         if (r.Note.Length > 0) rtf.Text("; " + r.Note, Rtf.Gray);
-                        rtf.NewLine();
+                        rtf.NewLine(); listingRows.Add(l);
                     }
                 }
             }
