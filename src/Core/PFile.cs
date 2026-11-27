@@ -22,6 +22,7 @@
 //  the sizes of the parts.
 // =====================================================================================
 using System;
+using System.Linq;
 using System.Collections.Generic;
 using System.Text;
 
@@ -248,17 +249,39 @@ namespace ZX81Compiler
         }
 
         /// <summary>Estimated RAM needed: the file plus the edit line, calculator and machine
-        /// stacks (about 100 bytes), rounded to the usual memory sizes.</summary>
+        /// stacks (about 100 bytes), rounded to the usual memory sizes: 1K, 2K, 4K, 16K, and
+        /// the 32K (RAM 4000h-BFFFh) and 64K (RAM 4000h-FFFFh usable) packs.</summary>
         public string RamEstimate(out int bytesNeeded)
         {
             bytesNeeded = FileEnd - 0x4000 + 100;
-            if (!Display.Collapsed && Display.Lines >= 24) bytesNeeded = Math.Max(bytesNeeded, FileEnd - 0x4000 + 100);
-            int k = bytesNeeded <= 1024 ? 1 : bytesNeeded <= 2048 ? 2 : bytesNeeded <= 4096 ? 4 : 16;
-            string s = k + "K";
+            int k = bytesNeeded <= 1024 ? 1 : bytesNeeded <= 2048 ? 2 : bytesNeeded <= 4096 ? 4 : bytesNeeded <= 0x4000 ? 16 : bytesNeeded <= 0x8000 ? 32 : 64;
+            string s;
             if (!Display.Collapsed && k < 4) s = "4K or more (the display file is expanded, which the ROM only does with more than 3.25K)";
             else if (k == 1) s = "1K (fits an unexpanded ZX81)";
+            else if (k == 32) s = "32K RAM pack (more than 16K: raise RAMTOP before loading, e.g. POKE 16389,192 then NEW)";
+            else if (k == 64) s = "64K RAM pack (more than 32K: raise RAMTOP before loading, e.g. POKE 16388,255, POKE 16389,255 then NEW)";
             else s = k + "K" + (k == 16 ? " RAM pack" : "");
             return s;
+        }
+
+        /// <summary>Things a real ZX81 can't do with this file, whatever RAM is fitted:
+        /// it only shows a display file below 8000h (32K), and it only runs machine code
+        /// below 8000h (above that its video circuit turns most instructions into NOP,
+        /// unless the machine has an M1NOT modification). codeEntries = machine code
+        /// addresses found (may be null).</summary>
+        public List<string> HardwareNotes(IEnumerable<int> codeEntries)
+        {
+            var notes = new List<string>();
+            int dEnd = DFile + Display.Size;
+            if (DFile >= 0x8000 || dEnd > 0x8000)
+                notes.Add("The display file (" + DFile.ToString("X4") + "h-" + (dEnd - 1).ToString("X4") + "h) is above 32K (8000h). A ZX81 can only show a display file below 8000h, so this file won't work on a real ZX81.");
+            if (FileEnd > 0x8000)
+                notes.Add("The file goes past 32K (to " + (FileEnd - 1).ToString("X4") + "h). When switched on, the ZX81 uses at most 16K (RAMTOP 8000h), so RAMTOP must be raised before loading it.");
+            if (codeEntries != null)
+                foreach (int a in codeEntries.Distinct().OrderBy(x => x))
+                    if (a >= 0x8000)
+                        notes.Add("Machine code at " + a + " (" + a.ToString("X4") + "h) is above 32K. A standard ZX81 can't run code there (it sees most instructions as NOP); it needs an M1NOT modification.");
+            return notes;
         }
 
         // ------------------------------------------------------------------

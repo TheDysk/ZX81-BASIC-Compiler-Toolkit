@@ -10,6 +10,13 @@ public static class ToolTest {
       File.WriteAllBytes("/tmp/zx81test.tzx", Tape.MakeTzx(p0, "TEST"));
       return 0;
     }
+    // "--mkp listing.txt out.p" turns a BASIC listing into a .p (interpreted BASIC, not compiled)
+    if (args.Length == 3 && args[0] == "--mkp") {
+      var d0 = new List<Diagnostic>();
+      var lines = Basic81.TokenizeProgram(File.ReadAllText(args[1]), d0);
+      File.WriteAllBytes(args[2], Basic81.BuildP(lines, null, false, false, -1));
+      return 0;
+    }
     foreach (var f in args) {
       var p = PFile.Load(f);
       var r = Decompiler.Run(p, Path.GetFileName(f));

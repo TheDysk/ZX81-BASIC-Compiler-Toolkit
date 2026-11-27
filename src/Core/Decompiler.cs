@@ -74,7 +74,8 @@ namespace ZX81Compiler
             {
                 sb.AppendLine("# Variable names are not stored in machine code, so they have been renamed.");
                 sb.AppendLine("# Compile with: Max string length " + r.Recovered.Options.MaxString +
-                    ", BREAK check " + (r.Recovered.Options.BreakCheck ? "on" : "off") + ", auto-run " + (r.Recovered.Options.Autorun ? "on" : "off"));
+                    ", BREAK check " + (r.Recovered.Options.BreakCheck ? "on" : "off") + ", auto-run " + (r.Recovered.Options.Autorun ? "on" : "off") +
+                    ", RAM " + r.Recovered.Options.Ram + "K");
                 foreach (var n in r.Recovered.Notes) sb.AppendLine("# " + n);
             }
             else
@@ -104,9 +105,15 @@ namespace ZX81Compiler
             sb.AppendLine("BASIC lines: " + p.Lines.Count + (p.Lines.Count > 0 ? "  (" + p.Lines[0].Number + " to " + p.Lines[p.Lines.Count - 1].Number + ")" : ""));
             sb.AppendLine("Auto-run: " + p.AutoRunDescription());
             int need;
-            sb.AppendLine("RAM needed: " + p.RamEstimate(out need));
+            string ram = p.RamEstimate(out need);
+            var rec = r.Recovered;
+            if (rec != null && rec.IsOurs && rec.BssSize > 0)
+                ram = rec.Options.Ram + "K RAM pack - compiled for " + rec.Options.Ram + "K: its variables use " +
+                    Z80Disasm.Hex(rec.BssStart, 4) + "-" + Z80Disasm.Hex(rec.BssStart + rec.BssSize - 1, 4) + " while it runs (not saved in the file)";
+            sb.AppendLine("RAM needed: " + ram);
             sb.AppendLine("Display file: " + (p.Display.Collapsed ? "collapsed (1K style)" : "expanded (16K style)") + ", " + p.Display.Size + " bytes");
             foreach (var pr in p.Problems) sb.AppendLine("Warning: " + pr);
+            foreach (var hn in p.HardwareNotes(r.Code.Entries.Select(e => e.Address))) sb.AppendLine("Warning: " + hn);
             sb.AppendLine();
             sb.AppendLine("MACHINE CODE");
             if (!r.Code.HasMachineCode) sb.AppendLine("  none found");
@@ -118,7 +125,7 @@ namespace ZX81Compiler
                 sb.AppendLine("COMPILED BY THE ZX81 BASIC COMPILER");
                 foreach (var n in r.Recovered.Notes) sb.AppendLine("  " + n);
                 if (r.Recovered.Success)
-                    sb.AppendLine("  Options detected: max string length " + r.Recovered.Options.MaxString + ", BREAK check " + (r.Recovered.Options.BreakCheck ? "on" : "off"));
+                    sb.AppendLine("  Options detected: max string length " + r.Recovered.Options.MaxString + ", BREAK check " + (r.Recovered.Options.BreakCheck ? "on" : "off") + ", RAM " + r.Recovered.Options.Ram + "K" + (r.Recovered.Options.Ram > 16 ? " (variables at " + Z80Disasm.Hex(r.Recovered.BssStart, 4) + " and up)" : ""));
                 sb.AppendLine();
             }
             if (r.EscapedLines > 0)

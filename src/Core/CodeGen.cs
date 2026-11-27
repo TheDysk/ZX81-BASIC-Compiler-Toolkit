@@ -55,6 +55,10 @@ namespace ZX81Compiler
         public bool LowerIsInverse = false;  // lower case letters in strings become inverse video
         public int MaxString = 255;          // capacity of ordinary string variables
         public bool MakeListing = true;      // produce an assembly listing
+        /// <summary>RAM the program is compiled for: 16 (a 16K RAM pack, the default), 32 or
+        /// 64. With 32 or 64 the code and screen stay below 8000h (a ZX81 can only run code
+        /// and show the display there) and the variables go at 8000h and up.</summary>
+        public int Ram = 16;
     }
 
     public class CodeGen
@@ -147,7 +151,7 @@ namespace ZX81Compiler
             Asm.Comment("Compiled ZX81 BASIC program");
             Lbl("start");
             Op("LD (ENTRYSP),SP");
-            Call("rt_memcheck");
+            Call(opt.Ram > 16 ? "rt_memcheckx" : "rt_memcheck");   // is there room / RAM for the variables?
             Call("rt_init");
             UsesCalc = prog.Any(ln => StmtUsesCalc(ln.Stmt));
             if (UsesCalc) Call("rt_finit");   // note where the ROM's calculator stack is

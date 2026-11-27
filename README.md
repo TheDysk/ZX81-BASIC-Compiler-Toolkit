@@ -15,7 +15,7 @@ A compiled program looks like this on the ZX81:
 10 RAND USR 16514
 ```
 
-Load it in an emulator such as EightyOne, or on a real ZX81 with a 16K RAM pack. By default it starts by itself after loading.
+Load it in an emulator such as EightyOne, or on a real ZX81 with a 16K, 32K or 64K RAM pack. By default it starts by itself after loading.
 
 All three tools are at version **V1.00**. Each shows its version in its window title and **Help → About** box. The command-line versions print it with `--version`, and it is stored in each `.exe` file (on Windows: right-click → Properties → Details).
 
@@ -44,6 +44,7 @@ All three GUIs accept files dragged onto their windows.
 - Compiled programs write straight to the display file, so they are much faster than interpreted BASIC.
 - Floating-point maths is done by the ZX81 ROM's own calculator, only where a program needs it (see below). Everything else stays fast 16-bit whole-number code.
 - The machine code (line 0) needs nothing but the ZX81 ROM: keyboard, FAST/SLOW, the calculator, the printer and the tape routines.
+- Programs can be compiled for a 16K, 32K or 64K RAM pack. With 32K or 64K, the variables, arrays and strings use the RAM above 32K (see [RAM packs](#ram-packs-16k-32k-and-64k)).
 
 ### Using the compiler
 
@@ -52,7 +53,7 @@ GUI: open a listing (`.txt`/`.bas`) or type one in, press **F5**, and choose whe
 Command line:
 
 ```
-zx81c listing.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--asm listing.asm]
+zx81c listing.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--asm listing.asm]
 zx81c --version
 ```
 
@@ -62,6 +63,7 @@ zx81c --version
 | `--no-break` | Don't stop the program when SPACE (BREAK) is pressed. Use this for games that use SPACE. |
 | `--lower-inverse` | Lower-case letters inside strings become inverse video |
 | `--maxstr N` | Capacity of ordinary string variables, 1–255 (default 255). Lower it if memory runs out. |
+| `--ram 16\|32\|64` | The RAM pack the program is for (default 16). See [RAM packs](#ram-packs-16k-32k-and-64k). In the GUI this is the **RAM** box. |
 | `--asm file` | Also write the generated assembly listing |
 
 ### Listing format
@@ -126,6 +128,24 @@ Line 40 prints `0.84147099 1.4142136 3.5`, as on a ZX81.
 - A maths error such as `SQR -1` or `LN 0` stops the program with the ZX81 report code (`A/10`: the program runs from line 10).
 - `VAL` works out any expression in its string, e.g. `VAL "2*3.5"` is 7. It can't see the program's variables, because those are kept outside BASIC.
 
+### RAM packs: 16K, 32K and 64K
+
+There were RAM packs for the ZX81 giving 32K (RAM from 4000h to BFFFh) and 64K (usable RAM from 4000h to FFFFh, plus 2000h–3FFFh on some packs). The ZX81 hardware limits what the RAM above 32K (8000h) can be used for. There, the video circuit turns most instruction fetches into NOPs, so the ZX81 can't run machine code there, and the display file has to be below 32K as well. That RAM can only hold data. And when it is switched on, the ROM only uses RAM up to 8000h (RAMTOP); BASIC only uses more after `POKE 16389,192` (32K) and `NEW`.
+
+So with `--ram 32` or `--ram 64` (the **RAM** box in the GUI):
+
+| | 16K (default) | 32K pack | 64K pack |
+|---|---|---|---|
+| Machine code, screen, machine stack | below 8000h | below 8000h | below 8000h |
+| Variables, arrays and strings | after the program, below 8000h | 8000h–BFFFh (16K) | 8000h–FFFFh (32K) |
+
+- The `.p` file itself is the same size whichever you choose, because the variables are not saved in it.
+- The code still has to fit below 32K, so the biggest program is about the same. What grows is the room for arrays and strings, e.g. `DIM A(5000)` (10,000 bytes) with 32K, or `DIM A(12000)` with 64K.
+- RAMTOP can be left at 8000h, in which case the stack stays below 32K. It can also be raised, as many 32K/64K owners did, in which case the stack sits above the variables. Both work. The program refuses to run if RAMTOP is set somewhere inside its variables.
+- When it starts, the program checks that the RAM above 32K is really there. It is not ROM echo (as on a 16K machine) and not a copy of the 16K below (as on some packs). If the check fails, it shows `NEEDS 32K RAM` or `NEEDS 64K RAM` at the top of the screen and goes back to BASIC.
+- If a program is too big for 16K, the compiler suggests 32K or 64K. If the code itself is too big for a ZX81 at all (it must fit below 32K), it says so.
+- The 8K at 2000h–3FFFh that some 64K packs provide isn't used.
+
 #### Differences from ZX81 BASIC
 
 - **Whole-number maths:** outside floating point, division truncates (`7/2` is 3, `-7/2` is −3) and `2**-1` is 0. Write `7/2.0` to get 3.5.
@@ -144,6 +164,7 @@ The decompiler takes any `.p` file and turns it back into text you can read, edi
 - **BASIC listing:** every line is written out with the same escapes the compiler uses (`\hh`, `\'.`, `%A`, see above), and checked byte by byte. Lines that can't be written as normal text, such as machine code hidden in a `REM`, are written entirely as `\hh` escapes, so the listing turns back into an identical program. In this listing `\hh` may appear anywhere in a line, not only inside strings. Lines starting with `#` are comments (the decompiler puts its notes and the saved variables there).
 - The listing is ZX81 BASIC, so it runs as normal interpreted BASIC once turned back into a `.p`. It can also be fed to the compiler, which accepts every ZX81 keyword, but programs that rely on variables holding fractions will behave differently when compiled (see above).
 - **Machine code:** it finds machine code wherever it is: in line 0, in any `REM` line, split across several lines, or elsewhere in RAM (for example in the variables area or past the end of the program). It starts from every `USR` call it can work out, including `USR 16514`, `USR VAL "16514"`, `USR (PEEK 16396+256*PEEK 16397)` and variables saved with the program, then follows jumps and calls. The result is an `.asm` listing with labels, ROM and system-variable names, and `DB` lines for data. The bytes after `RST 28h` (the ROM calculator) are named, e.g. `DB 1Ch,34h ; calculator: sin, end-calc`, and so are the report codes after `RST 08h`. The listing reassembles to the same bytes.
+- **RAM packs:** the report says how much RAM a file needs: 1K, 2K, 4K, 16K, 32K or 64K. For programs made by the compiler, it says which RAM they were compiled for and where their variables go. It warns about things a real ZX81 can't do: a display file above 32K, machine code above 32K (it needs an M1NOT modification), or a file that goes past 32K (RAMTOP must be raised before loading it). Large `.p` files, such as BASIC programs with big saved arrays, work like any other, up to the full 64K.
 - **Programs made by the compiler:** these are recognised, and the original BASIC is rebuilt from the machine code (with the original line numbers when the program used computed GOTO/GOSUB). Everything the compiler produces is understood, including floating point, `LPRINT`, `COPY`, `SAVE`, `LOAD` and `NEW`. The rebuilt BASIC is recompiled and compared with the file, and the report says whether the result is identical.
 - **New `.p` file:** made from the listing, or from the rebuilt BASIC. The original screen and saved variables can be kept.
 
@@ -190,7 +211,8 @@ Open a `.p` file (Ctrl+O, or drag it onto the window). The tabs:
 - **Overview**
   - *Auto-run detector:* whether the program starts by itself after LOAD and at which line (from `NXTLIN`).
   - *System variables* `4009h`–`407Ch`, each with its value and a plain-English explanation, for example where the display file is, or whether the display file is collapsed (1K) or expanded (16K).
-  - *Memory map:* a coloured bar and a table of the regions: system variables, each BASIC line, the display file, the variables and the edit line. The free memory and stack are worked out for a 1K, 2K, 4K, 16K or 32K machine. RAMTOP isn't saved in a `.p` file, so you choose the machine.
+  - *Memory map:* a coloured bar and a table of the regions: system variables, each BASIC line, the display file, the variables and the edit line. The free memory and stack are worked out for a 1K, 2K, 4K or 16K machine, or a 32K or 64K RAM pack. RAMTOP isn't saved in a `.p` file, so you choose the machine; the Browser picks the smallest that fits. For programs compiled for 32K/64K, the map shows their variables above 32K.
+  - *Warnings* for anything a real ZX81 can't do with the file, whatever RAM is fitted: a display file above 32K, machine code above 32K, or a file that needs RAMTOP raised before loading.
 - **Listing:** the BASIC with ZX81 characters translated: keywords, inverse video (shown highlighted) and block graphics as Unicode. The hidden 5-byte numbers that follow every number in a line are hidden by default; a tick box shows them as `{=value}` and marks with `!` any that differ from the digits shown, a common trick. Machine code in `REM` lines is shown as Z80 instructions.
 - **Screen:** the display file drawn as the ZX81 would show it (32×24), at a choice of sizes. Collapsed 1K display files are handled. Save it as a picture or as text.
 - **Variables:** every variable saved with the program, decoded: numbers, strings, arrays and FOR loops (with their limit, step and loop line).
@@ -244,12 +266,15 @@ Output goes to `build/`: all five executables.
 - runs compiled programs on a Z80 emulator and prints the ZX81 screen as text. Programs with known results are checked against `tests/expected`: screen, printer output, and tape/NEW/error events;
 - cross-checks the assembler against an independent disassembler;
 - decompiles every compiled test program, checks that the rebuilt BASIC recompiles to identical code, and checks that each listing turns back into an identical `.p` file;
+- runs the 32K and 64K test programs on emulated 64K, 32K and 16K machines, and with RAMTOP raised. They must run, or show `NEEDS 32K RAM` / `NEEDS 64K RAM` on machines without enough RAM;
+- builds large BASIC `.p` files for 32K and 64K packs (`tests/mkbig.py`: saved arrays past 32K and 48K, machine code at 40000, a display file above 32K) and checks they round-trip and get the right RAM estimate and warnings;
 - makes a `.wav` and a `.tzx` and decodes them again.
 
 ```sh
 pip install z80
 tests/run_tests.sh                     # all tests
 tests/run_tests.sh ~/zx81files         # also round-trip a folder of your own .p files
+python3 tests/run81.py tests/t11.p --hw16   # a 32K program on a plain 16K ZX81: NEEDS 32K RAM
 python3 tests/run81.py tests/t2.p      # show the screen of a test program
 ```
 

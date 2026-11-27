@@ -153,6 +153,71 @@ rt_memcheck:
 mc_msg:
     DB 34h,3Ah,39h,00h,34h,2Bh,00h,32h,2Ah,32h,34h,37h,3Eh
 ");
+            C("rt_memcheckx", "", @"
+; For a 32K or 64K RAM pack: the variables are at 8000h and up (BSS .. BSS_END).
+; Check that there is RAM there - on a 16K ZX81, 8000h-BFFFh is a copy of the ROM and
+; C000h-FFFFh may be a copy of the 16K RAM - and that the machine stack isn't inside
+; the variables (it is above them if RAMTOP was raised, e.g. POKE 16389,192 + NEW).
+; If not, show NEEDS 32K RAM (or 64K) and go back to BASIC.
+rt_memcheckx:
+    LD HL,BSS
+    CALL mx_test
+    JR NZ,mx_fail
+    LD HL,BSS_END-1
+    CALL mx_test
+    JR NZ,mx_fail
+    LD HL,0
+    ADD HL,SP               ; HL = stack pointer
+    LD DE,BSS
+    OR A
+    SBC HL,DE
+    RET C                   ; the stack is below the variables (RAMTOP 8000h): fine
+    ADD HL,DE
+    LD DE,BSS_END+160
+    OR A
+    SBC HL,DE
+    RET NC                  ; the stack is above the variables (RAMTOP raised): fine
+mx_fail:
+    LD HL,(D_FILE)
+    INC HL                  ; top left of the screen
+    LD DE,mx_msg
+    EX DE,HL
+    LD BC,13
+    LDIR
+    LD SP,(ENTRYSP)         ; back to BASIC
+    LD BC,4
+    RET
+mx_test:                ; Z if (HL) is RAM, and not the same memory as HL-8000h
+    LD A,(HL)
+    LD B,A                  ; the byte as it was
+    CPL
+    LD (HL),A
+    CP (HL)                 ; did it change?
+    LD (HL),B               ; (put it back)
+    RET NZ                  ; no: not RAM
+    LD A,H
+    CP 0C0h
+    JR C,mx_ok              ; below C000h: HL-8000h is the ROM, can't be a copy
+    LD D,H
+    LD E,L
+    RES 7,D                 ; DE = HL-8000h
+    LD A,(DE)
+    LD C,A                  ; the byte there
+    LD A,B
+    CPL
+    LD (HL),A               ; change the high byte...
+    LD A,(DE)
+    CP C                    ; ...did the low one change with it?
+    LD A,C
+    LD (DE),A               ; put both back
+    LD (HL),B
+    RET
+mx_ok:
+    XOR A
+    RET
+mx_msg:                 ; NEEDS 32K RAM (RAMD1, RAMD2 = the digits, set by Compiler.cs)
+    DB 33h,2Ah,2Ah,29h,38h,00h,RAMD1,RAMD2,30h,00h,37h,26h,32h
+");
             C("rt_zero", "", @"
 rt_zero:                ; zero BC (>=1) bytes at HL
     LD (HL),0               ; clear the first byte...

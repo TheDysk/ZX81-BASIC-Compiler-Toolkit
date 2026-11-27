@@ -57,7 +57,8 @@ namespace ZX81Compiler
     {
         public const int CodeStart = 16514;   // first byte after "0 REM"
         const int ProgStart = 0x407D;           // start of the BASIC program in memory
-        const int MemoryTop = 0x8000;           // 16K RAM pack
+        const int MemoryTop = 0x8000;           // 16K RAM pack: top of RAM; also the top of code and display for any pack
+        const int HighVars = 0x8000;            // 32K / 64K packs: where the variables start
         const int StackReserve = 0x200;         // room left below the top of memory for the machine stack
 
         /// <summary>Compile a whole listing. Check result.Success, then use result.PFile;
@@ -83,15 +84,21 @@ namespace ZX81Compiler
                 res.Diagnostics.AddRange(gen.Diags);
                 if (res.Diagnostics.Any(d => d.IsError)) return res;
 
+                // the digits of the NEEDS 32K RAM message (32K / 64K packs only)
+                bool big = opt.Ram > 16 && HighVars + gen.BssSize > 0xC000;
+                gen.Asm.Define("RAMD1", big ? 0x22 : 0x1F);   // 6 or 3
+                gen.Asm.Define("RAMD2", big ? 0x20 : 0x1E);   // 4 or 2
                 // first assembly with a provisional variables address, to find the code size
                 gen.Asm.Define("BSS", 0x6000);
                 code = gen.Asm.Assemble(CodeStart, false);
-                int vars = VarsAddress(code.Length, gen.UsesCalc);
+                int vars = opt.Ram > 16 ? HighVars : VarsAddress(code.Length, gen.UsesCalc);
                 // second assembly with the real address
                 gen.Asm.Symbols.Clear();
+                gen.Asm.Define("RAMD1", big ? 0x22 : 0x1F);
+                gen.Asm.Define("RAMD2", big ? 0x20 : 0x1E);
                 gen.Asm.Define("BSS", vars);
                 code = gen.Asm.Assemble(CodeStart, opt.MakeListing);
-                if (VarsAddress(code.Length, gen.UsesCalc) != vars) throw new AsmException("internal: code size changed");
+                if (opt.Ram == 16 && VarsAddress(code.Length, gen.UsesCalc) != vars) throw new AsmException("internal: code size changed");
                 res.VarsAddress = vars;
                 res.VarsSize = gen.BssSize;
                 res.CodeSize = code.Length;
@@ -107,24 +114,18 @@ namespace ZX81Compiler
                 return res;
             }
 
-            // Will the variables fit below the machine stack on a 16K ZX81?
             int end = res.VarsAddress + res.VarsSize;
-            if (end > MemoryTop - StackReserve)
+            string err = CheckMemory(opt, res.CodeSize, gen.UsesCalc, end);
+            if (err != null)
             {
-                res.Diagnostics.Add(new Diagnostic
-                {
-                    IsError = true,
-                    BasicLine = -1,
-                    Message = string.Format("program needs memory up to {0} but a 16K ZX81 only has room up to about {1}. " +
-                        "Try a smaller 'max string length' (each string variable reserves that much).", end, MemoryTop - StackReserve)
-                });
+                res.Diagnostics.Add(new Diagnostic { IsError = true, BasicLine = -1, Message = err });
                 return res;
             }
 
             res.PFile = BuildPFile(code, opt.Autorun);
             res.Success = true;
-            res.Summary = string.Format("{0} BASIC lines compiled. Machine code: {1} bytes at 16514-{2}. Variables: {3} bytes at {4}-{5}. File size: {6} bytes.",
-                lines.Count, code.Length, CodeStart + code.Length - 1, res.VarsSize, res.VarsAddress, end - 1, res.PFile.Length);
+            res.Summary = string.Format("{0} BASIC lines compiled for {7}K RAM. Machine code: {1} bytes at 16514-{2}. Variables: {3} bytes at {4}-{5}. File size: {6} bytes.",
+                lines.Count, code.Length, CodeStart + code.Length - 1, res.VarsSize, res.VarsAddress, end - 1, res.PFile.Length, opt.Ram);
             return res;
         }
 
@@ -134,6 +135,31 @@ namespace ZX81Compiler
         /// (floating point, VAL, SAVE/LOAD): the calculator stack and the ROM's workspace
         /// (text made by STR$, the copy VAL makes of its string) grow up from there.</summary>
         public const int CalcReserve = 768;
+
+        /// <summary>Does the program fit the chosen RAM? null if so, else the error message.
+        ///  16K: code, display, the ROM's workspace, the variables and the stack all below 8000h.
+        ///  32K/64K: code, display, workspace and the stack below 8000h (the ROM puts the stack
+        ///  there unless RAMTOP is raised; code can only run, and the display only be shown,
+        ///  below 8000h); the variables from 8000h up to BFFFh (32K) or FFFFh (64K).</summary>
+        static string CheckMemory(Options opt, int codeLength, bool usesCalc, int end)
+        {
+            int low = VarsAddress(codeLength, usesCalc);          // first free byte after the display, edit line and calculator room
+            if (opt.Ram == 16)
+            {
+                if (end <= MemoryTop - StackReserve) return null;
+                return string.Format("program needs memory up to {0} but a 16K ZX81 only has room up to about {1}. " +
+                    "Try a smaller 'max string length' (each string variable reserves that much), or compile for a 32K or 64K RAM pack.",
+                    end, MemoryTop - StackReserve);
+            }
+            if (low > MemoryTop - StackReserve)
+                return string.Format("the machine code is too big: with the screen it needs memory up to {0}, but a ZX81 can only run machine code " +
+                    "below 32768 (8000h) whatever RAM pack is fitted, leaving room for the stack up to about {1}.", low, MemoryTop - StackReserve);
+            int top = opt.Ram == 32 ? 0xC000 : 0x10000;
+            if (end > top - StackReserve)
+                return string.Format("the variables need memory up to {0} but a {1}K RAM pack only has room up to about {2}. " +
+                    "Try a smaller 'max string length'{3}.", end, opt.Ram, top - StackReserve, opt.Ram == 32 ? ", or compile for 64K" : "");
+            return null;
+        }
 
         static int VarsAddress(int codeLength, bool usesCalc)
         {

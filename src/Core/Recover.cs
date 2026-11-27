@@ -81,6 +81,10 @@ namespace ZX81Compiler
         {
             var asm = new Z80Asm();
             asm.Define("BSS", bss);
+            // the digits of rt_memcheckx's message are single bytes: give them small values
+            // that differ between the two assemblies, so they become wildcards
+            asm.Define("RAMD1", undef & 0x7F);
+            asm.Define("RAMD2", (undef >> 1) & 0x7F);
             asm.Undefined = name => (undef + Math.Abs(name.GetHashCode() % 0x600)) & 0xFFFF;
             foreach (var l in Runtime.BssEquates.Split('\n')) if (l.Trim().Length > 0) asm.Line(l.TrimEnd('\r'));
             foreach (var l in ch.Code.Split('\n')) if (l.Trim().Length > 0) asm.Line(l.TrimEnd('\r'));
@@ -186,6 +190,8 @@ namespace ZX81Compiler
             bssSize = m[init + 4] | m[init + 5] << 8;
             res.BssStart = bss; res.BssSize = bssSize;
             res.Options.BreakCheck = rtAt.ContainsValue("rt_brk");
+            // variables at 8000h and up: compiled for a 32K or 64K RAM pack
+            res.Options.Ram = bss >= 0x8000 ? (bss + bssSize > 0xC000 ? 64 : 32) : 16;
             res.Options.Autorun = p.AutoRunLine != null;
             PreScan();
             Interpret();
@@ -1200,7 +1206,7 @@ namespace ZX81Compiler
         // ------------------------------------------------------------------
         void Verify()
         {
-            var cr = Compiler.Compile(res.Listing, new Options { Autorun = res.Options.Autorun, BreakCheck = res.Options.BreakCheck, MaxString = res.Options.MaxString, MakeListing = false });
+            var cr = Compiler.Compile(res.Listing, new Options { Autorun = res.Options.Autorun, BreakCheck = res.Options.BreakCheck, MaxString = res.Options.MaxString, Ram = res.Options.Ram, MakeListing = false });
             if (!cr.Success)
             {
                 res.Notes.Add("The rebuilt BASIC doesn't compile: " + string.Join("; ", cr.Diagnostics.Where(d => d.IsError).Select(d => d.ToString()).Take(3)));

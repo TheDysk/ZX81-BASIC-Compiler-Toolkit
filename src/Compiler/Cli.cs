@@ -42,6 +42,10 @@ namespace ZX81Compiler
                     case "--no-break": opt.BreakCheck = false; break;
                     case "--lower-inverse": opt.LowerIsInverse = true; break;
                     case "--maxstr": opt.MaxString = Math.Max(1, Math.Min(255, int.Parse(args[++i]))); break;   // clamp to 1..255
+                    case "--ram":
+                        opt.Ram = int.Parse(args[++i].TrimEnd(new[] { 'K', 'k' }));
+                        if (opt.Ram != 16 && opt.Ram != 32 && opt.Ram != 64) { outw.WriteLine("--ram must be 16, 32 or 64"); return 1; }
+                        break;
                     case "--asm": asmFile = args[++i]; break;
                     case "--version":
                         outw.WriteLine("zx81c - ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler));
@@ -50,7 +54,7 @@ namespace ZX81Compiler
                     case "--help":
                     case "/?":
                         outw.WriteLine("zx81c - ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler));
-                        outw.WriteLine("Usage: zx81c input.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--asm listing.asm]");
+                        outw.WriteLine("Usage: zx81c input.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--asm listing.asm]");
                         return 0;
                     default:
                         if (input == null) input = a; else output = a;

@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """Run a compiled ZX81 .p on a Z80 emulator and print the screen.
 usage: run81.py file.p [--keys "frame:char,frame:char,..."] [--frames N] [--break F] [--snap f1,f2]
-                       [--rom zx81.rom | --stub] [--expect saved.txt]
+                       [--rom zx81.rom | --stub] [--expect saved.txt] [--ramtop ADDR] [--hw16 | --hw32]
 --expect compares the screen, printer output and events with a saved run (tests/expected).
+--ramtop ADDR (hex, e.g. C000) sets RAMTOP and puts the stack just below it, as after
+POKE RAMTOP + NEW on a machine with a 32K/64K RAM pack (default 8000).
+--hw16 makes the first 20000 instructions see a plain 16K ZX81: 8000h-BFFFh reads as the
+ROM (writes are lost) and C000h-FFFFh is the same memory as 4000h-7FFFh. That is enough
+to test the start-up RAM check of programs compiled for 32K/64K. --hw32 is a 32K pack:
+RAM up to BFFFh, with C000h-FFFFh the same memory as 4000h-7FFFh.
 Keys: char is a ZX81 key char (A-Z 0-9 space), NL = newline, RUB = rubout. Each press lasts 5 frames.
 
 ROM: with the real ZX81 ROM (--rom file, or tests/zx81.rom, or $ZX81_ROM) the ROM's own
@@ -48,7 +54,8 @@ def find_rom(path=None):
         if p and os.path.exists(p): return open(p, 'rb').read()
     return None
 
-def run(pfile, keys=(), frames=3000, quiet=False, breakframe=None, snaps=(), rom=None, stub=False, expect=None):
+def run(pfile, keys=(), frames=3000, quiet=False, breakframe=None, snaps=(), rom=None, stub=False, expect=None,
+        ramtop=0x8000, hw16=False, hw32=False):
     data = open(pfile, 'rb').read()
     m = z80.Z80Machine()
     mem = m.memory
@@ -70,12 +77,24 @@ def run(pfile, keys=(), frames=3000, quiet=False, breakframe=None, snaps=(), rom
     m.set_memory_block(0x4009, data)
     def w16(a, v): mem[a] = v & 255; mem[a + 1] = (v >> 8) & 255
     def r16(a): return mem[a] | mem[a + 1] << 8
-    w16(0x4004, 0x8000)                         # RAMTOP (not in the .p)
+    w16(0x4004, ramtop)                         # RAMTOP (not in the .p)
     romcopy = bytes(mem[0:0x3F00])
     m.iy = 0x4000
-    w16(0x7FEE, 0x3FF8)                         # return address of RAND USR
-    m.sp = 0x7FEE
+    w16(ramtop - 0x12, 0x3FF8)                  # return address of RAND USR
+    m.sp = ramtop - 0x12
     m.pc = 16514
+    if hw16 or hw32:
+        # plain 16K machine (or 32K): step one instruction at a time and fix the memory up after each
+        if hw16: m.set_memory_block(0x8000, bytes(romimg))
+        m.set_memory_block(0xC000, bytes(mem[0x4000:0x8000]))
+        for _ in range(20000):
+            lo = bytes(mem[0x4000:0x8000]); hi = bytes(mem[0xC000:0x10000])
+            m.ticks_to_stop = 1; m.run()
+            if hw16 and bytes(mem[0x8000:0xC000]) != bytes(romimg): m.set_memory_block(0x8000, bytes(romimg))   # ROM: writes lost
+            nlo = bytes(mem[0x4000:0x8000]); nhi = bytes(mem[0xC000:0x10000])
+            if nhi != hi: m.set_memory_block(0x4000, nhi)                                            # a write up there lands below
+            elif nlo != lo: m.set_memory_block(0xC000, nlo)
+            if 0x3FF8 <= m.pc <= 0x3FF9: break
     traps = {}
     if realrom:
         for a in (0x0008, 0x0871, 0x0869, 0x02FB, 0x0343, 0x03C3): m.set_breakpoint(a)
@@ -179,7 +198,13 @@ if __name__ == '__main__':
     snaps = ()
     if '--snap' in args:
         i = args.index('--snap'); snaps = [int(x) for x in args[i + 1].split(',')]; del args[i:i + 2]
-    rom = None; stub = False
+    rom = None; stub = False; ramtop = 0x8000; hw16 = False
+    if '--ramtop' in args:
+        i = args.index('--ramtop'); ramtop = int(args[i + 1], 16); del args[i:i + 2]
+    if '--hw16' in args:
+        args.remove('--hw16'); hw16 = True
+    hw32 = '--hw32' in args
+    if hw32: args.remove('--hw32')
     if '--rom' in args:
         i = args.index('--rom'); rom = args[i + 1]; del args[i:i + 2]
     if '--stub' in args:
@@ -187,4 +212,4 @@ if __name__ == '__main__':
     expect = None
     if '--expect' in args:
         i = args.index('--expect'); expect = args[i + 1]; del args[i:i + 2]
-    run(args[0], keys, frames, breakframe=brk, snaps=snaps, rom=rom, stub=stub, expect=expect)
+    run(args[0], keys, frames, breakframe=brk, snaps=snaps, rom=rom, stub=stub, expect=expect, ramtop=ramtop, hw16=hw16, hw32=hw32)

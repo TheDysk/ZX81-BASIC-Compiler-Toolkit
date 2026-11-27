@@ -4,7 +4,7 @@
 //  The window has, from top to bottom:
 //     menu bar        File / Build / Help
 //     toolbar         Open, Save, Compile, Compile as, Check
-//     options row     the tick boxes and "Max string length"
+//     options row     the tick boxes, "Max string length" and "RAM"
 //     editor          the BASIC listing (an ordinary multi-line TextBox)
 //     messages        errors and warnings; double-click one to jump to its line
 //     status bar      what just happened
@@ -44,6 +44,7 @@ namespace ZX81Compiler
         readonly ListBox messages;                             // errors / warnings (Diagnostic objects) and summaries (strings)
         readonly CheckBox chkAutorun, chkBreak, chkLower, chkAsm;   // the compile options
         readonly NumericUpDown numMaxStr;                      // Options.MaxString
+        readonly ComboBox cbRam;                               // Options.Ram: 16K, 32K or 64K
         readonly ToolStripStatusLabel status;                  // status bar text
         // ---- state ----
         string listingPath;   // file the listing was loaded from / saved to (null = never saved)
@@ -98,12 +99,17 @@ namespace ZX81Compiler
             chkAsm = new CheckBox { Text = "Also save .asm listing", Checked = false, AutoSize = true };
             var lbl = new Label { Text = "Max string length:", AutoSize = true, Padding = new Padding(10, 4, 0, 0) };
             numMaxStr = new NumericUpDown { Minimum = 1, Maximum = 255, Value = 255, Width = 55 };
+            var lblRam = new Label { Text = "RAM:", AutoSize = true, Padding = new Padding(10, 4, 0, 0) };
+            cbRam = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 60 };
+            cbRam.Items.AddRange(new object[] { "16K", "32K", "64K" });
+            cbRam.SelectedIndex = 0;
             var tips = new ToolTip();   // the hints shown when the mouse rests on an option
             tips.SetToolTip(chkAutorun, "The program starts by itself when loaded (via line 10 RAND USR 16514).");
             tips.SetToolTip(chkBreak, "Checks the BREAK key on every GOTO and NEXT, like ZX81 BASIC. Untick for games that use SPACE.");
             tips.SetToolTip(chkLower, "If ticked, lower case letters inside \"strings\" become inverse video letters.");
             tips.SetToolTip(numMaxStr, "Room reserved for each ordinary string variable (A$..Z$). Lower it if you run out of memory.");
-            foreach (Control c in new Control[] { chkAutorun, chkBreak, chkLower, chkAsm, lbl, numMaxStr })
+            tips.SetToolTip(cbRam, "The RAM pack the program is for. With 32K or 64K the variables go above 32K (8000h), giving 16K or 32K for variables, arrays and strings. The code itself must still fit below 32K.");
+            foreach (Control c in new Control[] { chkAutorun, chkBreak, chkLower, chkAsm, lbl, numMaxStr, lblRam, cbRam })
             {
                 c.Margin = new Padding(4, 0, 12, 0);
                 opts.Controls.Add(c);
@@ -244,7 +250,8 @@ namespace ZX81Compiler
                 BreakCheck = chkBreak.Checked,
                 LowerIsInverse = chkLower.Checked,
                 MaxString = (int)numMaxStr.Value,
-                MakeListing = chkAsm.Checked
+                MakeListing = chkAsm.Checked,
+                Ram = 16 << cbRam.SelectedIndex          // 16, 32, 64
             };
         }
 
@@ -406,6 +413,17 @@ WHOLE NUMBERS AND FLOATING POINT
   Errors in floating point (SQR -1, LN 0, ...) stop the program with
   the ZX81 report code, e.g. A/10. VAL works out any expression in its
   string, but can't see the program's variables.
+
+RAM PACKS: 16K, 32K AND 64K
+  Choose the RAM the program is for (RAM box, or --ram 16|32|64).
+  16K (the default): everything lives below 32K (8000h).
+  32K / 64K: the variables, arrays and strings go above 32K: 8000h-BFFFh
+  (16K of room) with a 32K pack, 8000h-FFFFh (32K of room) with a 64K
+  pack. The machine code and the screen stay below 32K, because a ZX81
+  can only run code and show the display there, so the code itself can't
+  grow beyond about 15K. RAMTOP can be left alone, or raised (the
+  variables then sit below the stack). When the program starts it checks
+  that the RAM is really there and shows NEEDS 32K RAM (or 64K) if not.
 
 DIFFERENCES FROM ZX81 BASIC
   * Outside floating point, maths is whole-number: 7/2 = 3, 2**-1 = 0.

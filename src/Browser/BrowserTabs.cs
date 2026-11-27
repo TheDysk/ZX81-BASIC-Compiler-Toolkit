@@ -33,8 +33,8 @@ namespace ZX81Compiler
             var mapBox = new GroupBox { Text = "Memory map", Dock = DockStyle.Top, Height = 230 };
             var ramRow = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 28 };
             ramRow.Controls.Add(new Label { Text = "Show the map for a ZX81 with:", AutoSize = true, Padding = new Padding(0, 5, 0, 0) });
-            cbRam = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 140 };
-            cbRam.Items.AddRange(new object[] { "1K (RAMTOP 4400h)", "2K (RAMTOP 4800h)", "4K (RAMTOP 5000h)", "16K (RAMTOP 8000h)", "32K (RAMTOP C000h)" });
+            cbRam = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 190 };
+            cbRam.Items.AddRange(new object[] { "1K (RAMTOP 4400h)", "2K (RAMTOP 4800h)", "4K (RAMTOP 5000h)", "16K (RAMTOP 8000h)", "32K pack (RAM to BFFFh)", "64K pack (RAM to FFFFh)" });
             cbRam.SelectedIndexChanged += (s, e) => { if (p != null) FillMap(); };
             ramRow.Controls.Add(cbRam);
             ramRow.Controls.Add(new Label { Text = "(RAMTOP isn't saved in .p files, so choose the machine)", AutoSize = true, Padding = new Padding(6, 5, 0, 0), ForeColor = Color.DimGray });
@@ -69,12 +69,19 @@ namespace ZX81Compiler
             facts.AppendLine("Size " + p.Data.Length + " bytes, " + p.Lines.Count + " BASIC lines" + (p.Lines.Count > 0 ? " (" + p.Lines[0].Number + "-" + p.Lines[p.Lines.Count - 1].Number + ")" : "") +
                 ". Program cursor E_PPC = line " + p.EPpc + " (PPC itself isn't saved). Display file: " + (p.Display.Collapsed ? "collapsed (1K style)" : "expanded (16K style)") + ".");
             string needs = "RAM needed: " + ram + ".";
-            if (rec != null && rec.IsOurs) needs += " Made by the ZX81 BASIC Compiler: needs 16K (its variables use RAM after the file).";
+            if (rec != null && rec.IsOurs)
+            {
+                int ramK = rec.Options.Ram;
+                needs = "RAM needed: " + ramK + "K. Made by the ZX81 BASIC Compiler for " + ramK + "K: its variables use " + rec.BssStart.ToString("X4") + "h-" +
+                    (rec.BssStart + rec.BssSize - 1).ToString("X4") + "h while it runs" + (ramK > 16 ? " (above 32K; it shows NEEDS " + ramK + "K RAM if that RAM isn't there)." : " (after the file).");
+            }
             foreach (var e in ca.Entries) if (!e.InFile && e.Address >= 0x4000) { needs += " Calls machine code at " + e.Address + " outside the file."; break; }
             facts.AppendLine(needs);
-            if (p.Problems.Count > 0) facts.Append("Warnings: " + string.Join("; ", p.Problems));
+            var warn = new List<string>(p.Problems);
+            warn.AddRange(p.HardwareNotes(ca.Entries.Select(x => x.Address)));
+            if (warn.Count > 0) facts.Append("Warnings: " + string.Join(" ", warn.Select(w => w.TrimEnd('.') + ".")));
             lblFacts.Text = facts.ToString();
-            lblFacts.ForeColor = p.Problems.Count > 0 ? Color.DarkRed : SystemColors.ControlText;
+            lblFacts.ForeColor = warn.Count > 0 ? Color.DarkRed : SystemColors.ControlText;
 
             lvSys.BeginUpdate();
             lvSys.Items.Clear();
@@ -92,11 +99,14 @@ namespace ZX81Compiler
             lvSys.EndUpdate();
             // default RAM size for the map
             int idx = need <= 1024 && p.Display.Collapsed ? 0 : need <= 2048 && p.Display.Collapsed ? 1 : need <= 4096 && p.Display.Collapsed ? 2 : 3;
-            if (p.FileEnd > 0x8000) idx = 4;
+            int highest = p.FileEnd;
+            if (rec != null && rec.IsOurs) highest = Math.Max(highest, rec.BssStart + rec.BssSize);
+            if (highest > 0x8000) idx = 4;
+            if (highest > 0xC000) idx = 5;
             if (cbRam.SelectedIndex == idx) FillMap(); else cbRam.SelectedIndex = idx;
         }
 
-        static readonly int[] RamTops = { 0x4400, 0x4800, 0x5000, 0x8000, 0xC000 };
+        static readonly int[] RamTops = { 0x4400, 0x4800, 0x5000, 0x8000, 0xC000, 0x10000 };
 
         void FillMap()
         {
@@ -111,13 +121,27 @@ namespace ZX81Compiler
             add("Variables", p.VarsAddr, Math.Min(p.ELine, p.FileEnd), Color.Goldenrod, p.ReadVariables().Count + " saved variable(s)");
             if (p.FileEnd > p.ELine && p.ELine >= p.VarsAddr) add("Extra bytes after E_LINE", p.ELine, p.FileEnd, Color.IndianRed, "saved by some tools; ignored by the ZX81");
             int free = Math.Max(p.FileEnd, p.ELine) + 1;
-            if (rec != null && rec.IsOurs && rec.BssSize > 0)
+            if (rec != null && rec.IsOurs && rec.BssSize > 0 && rec.BssStart >= 0x8000)
+            {
+                // compiled for a 32K/64K pack: the stack stays below 32K, the variables are above it
+                add("Edit line, calculator and machine stack", free, Math.Min(0x8000, top), Color.Plum, "used while running (not saved); RAMTOP 8000h");
+                add("Compiled program's variables", rec.BssStart, rec.BssStart + rec.BssSize, Color.Orange, "above 32K; cleared when the compiled program starts");
+                free = rec.BssStart + rec.BssSize;
+            }
+            else if (rec != null && rec.IsOurs && rec.BssSize > 0)
             {
                 add("Edit line + calculator stack", free, rec.BssStart, Color.Plum, "used while running (not saved)");
                 add("Compiled program's variables", rec.BssStart, rec.BssStart + rec.BssSize, Color.Orange, "cleared when the compiled program starts");
                 free = rec.BssStart + rec.BssSize;
             }
-            add("Spare RAM (machine stack at the top)", free, top, Color.FromArgb(235, 235, 235), top < free ? "TOO SMALL - the program needs more RAM" : (top - free) + " bytes free (before the stacks grow)");
+            if (top > 0x8000 && free < 0x8000)
+            {
+                // a RAM pack above 16K: the ROM only uses up to 8000h unless RAMTOP is raised
+                add("Spare RAM (machine stack at the top, RAMTOP 8000h)", free, 0x8000, Color.FromArgb(235, 235, 235), (0x8000 - free) + " bytes free (before the stacks grow)");
+                add("RAM above 32K", 0x8000, top, Color.FromArgb(215, 230, 245), "data only: a ZX81 can't run code or show the display here; BASIC only uses it if RAMTOP is raised");
+            }
+            else
+                add(rec != null && rec.IsOurs && rec.BssStart >= 0x8000 ? "Spare RAM" : "Spare RAM (machine stack at the top)", free, top, Color.FromArgb(235, 235, 235), top < free ? "TOO SMALL - the program needs more RAM" : (top - free) + " bytes free (before the stacks grow)");
             if (top < free) areas.Add(new MemoryMapPanel.Area { Name = "Over RAMTOP!", From = top, To = free, Color = Color.Red, Note = "this RAM size is too small" });
             foreach (var blk in ca.Blocks) areas.Add(new MemoryMapPanel.Area { Name = "machine code / data", From = blk[0], To = blk[1], Color = Color.DarkRed, Note = p.Region(blk[0]), Overlay = true });
             mapPanel.SetAreas(areas, 0x4000, Math.Max(top, free));

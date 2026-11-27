@@ -207,6 +207,8 @@ Only for programs made by the ZX81 BASIC Compiler. The decompiler reads the
 compiled machine code back into BASIC statements. Variable names aren't stored in
 machine code, so variables are renamed A, B, C ... If the report says 'Verified',
 compiling the rebuilt BASIC gives exactly the same machine code.
+The RAM the program was compiled for (16K, 32K or 64K) is detected too, and shown
+in the report and at the top of the rebuilt BASIC.
 Everything the compiler supports is recognised, including floating point (SIN, PI,
 0.5 ...), LPRINT, COPY, SAVE, LOAD and NEW. Lines that compile to nothing (REM,
 LIST, LLIST, CONT) can only come back as REM, and only when the program had a
