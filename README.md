@@ -60,7 +60,7 @@ The environment variable `ZX81TOOLSET_INI` can point at another settings file.
 
 ### Using the compiler
 
-GUI: open a listing (`.txt`/`.bas`) or type one in, press **F5**, and choose where to save the `.p` file. **Help → Supported BASIC** lists everything in detail.
+GUI: open a listing (`.txt`/`.bas`/`.b81`) or type one in, press **F5**, and choose where to save the `.p` file. **Help → Supported BASIC** lists everything in detail.
 
 When a listing is opened, the compiler does a trial compile and shows the **expected size** straight away: machine code, variables, and how much of the RAM it uses. It also says whether the program fits a 16K ZX81 (or the RAM chosen in the RAM box), and if not, whether a 32K or 64K RAM pack would do. After compiling, both the window and `zx81c` show the sizes in bytes and K, for example:
 
@@ -73,6 +73,10 @@ Memory: 5,324 bytes (5.20K) of the 16K RAM used (program, screen, workspace and 
 ```
 
 If a program doesn't fit, the sizes are still shown with the error.
+
+The compiler can also open a program or tape: a `.p`, `.81` or `.p81` file, a ZX80 `.o`/`.80` file, a `.wav` recording or a `.tzx` image (see [Tapes, .p81 and ZX80 files](#tapes-p81-and-zx80-files)). Its BASIC is shown as a new, unsaved listing: for a program made by this compiler, the BASIC rebuilt from its machine code, which compiles back to the same code; otherwise the BASIC as stored. `zx81c` accepts the same files as input.
+
+In every program's Open dialog, the file type list starts with all the types that program can open together, then each type on its own, then All files.
 
 Command line:
 

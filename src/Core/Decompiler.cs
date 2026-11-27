@@ -65,6 +65,24 @@ namespace ZX81Compiler
             return r;
         }
 
+        /// <summary>A program or tape opened in the compiler: the BASIC to edit. For a
+        /// program made by the compiler this is the rebuilt BASIC (so it compiles to the
+        /// same code); otherwise the listing as stored. Notes about where it came from are
+        /// added as # comment lines, which the compiler skips.</summary>
+        public static string ListingForCompiler(LoadedProgram lp, string fileName, out bool rebuilt)
+        {
+            var r = Run(PFile.Load(lp.P), fileName);
+            rebuilt = r.Basic != null;
+            var sb = new StringBuilder();
+            if (lp.Converted)
+            {
+                sb.Append("# Opened from " + fileName + " (" + lp.Format + ")\n");
+                foreach (var n in lp.Notes) sb.Append("#   " + n + "\n");
+            }
+            sb.Append(rebuilt ? r.Basic : r.Listing);
+            return sb.ToString();
+        }
+
         static string Header(PFile p, string name, string what, DecompileResult r)
         {
             var sb = new StringBuilder();

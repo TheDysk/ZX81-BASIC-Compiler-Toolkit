@@ -4,7 +4,10 @@
 //  Builds zx81c.exe. The Windows GUI (MainForm.cs) calls the same Compiler.Compile,
 //  so the two always behave the same. ReadListing is shared by both.
 //
-//  Exit codes: 0 = success, 1 = the program had errors, 2 = no input file given.
+//  Exit codes: 0 = success, 1 = the program had errors, 2 = no input file given or it
+//  couldn't be read, 3 = compiled but the emulator (--run) couldn't be started.
+//  The input can be a listing, or a program or tape (.p .81 .p81 .o .80 .wav .tzx), which
+//  is turned into BASIC by the decompiler first.
 // =====================================================================================
 using System;
 using System.IO;
@@ -59,6 +62,8 @@ namespace ZX81Compiler
                     case "/?":
                         outw.WriteLine("zx81c - ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler));
                         outw.WriteLine("Usage: zx81c input.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--strict-int] [--asm listing.asm] [--run] [--emulator path]");
+                        outw.WriteLine("  input.txt can also be a program or tape (.p .81 .p81 .o .80 .wav .tzx): its BASIC is");
+                        outw.WriteLine("  compiled (for a program made by this compiler, the BASIC rebuilt from its code).");
                         outw.WriteLine("  --strict-int   no floating point: SIN, PI, 0.5, VAL ... are errors (same as a #STRICT_INT line)");
                         outw.WriteLine("  --run          start the emulator set up in " + ToolConfig.FileName + " with the new .p file");
                         outw.WriteLine("  --emulator P   start emulator P instead (for this run only)");
@@ -70,7 +75,10 @@ namespace ZX81Compiler
             }
             if (input == null) { outw.WriteLine("No input file. Use --help for usage."); return 2; }
             if (output == null) output = Path.ChangeExtension(input, ".p");   // default: same name, .p
-            string text = ReadListing(input);
+            string text;
+            try { text = ReadListing(input); }
+            catch (TapeDecodeException e) { outw.WriteLine("Could not read the tape in " + input + ": " + e.Message); return 2; }
+            catch (Exception e) { outw.WriteLine("Could not read " + input + ": " + e.Message); return 2; }
             var res = Compiler.Compile(text, opt);
             foreach (var d in res.Diagnostics) outw.WriteLine(d);
             if (!res.Success)
@@ -108,6 +116,13 @@ namespace ZX81Compiler
         /// covers older files with a £ sign saved by other editors.</summary>
         public static string ReadListing(string path)
         {
+            // a program or tape (.p .p81 .o .wav .tzx ...): its BASIC, through the decompiler
+            // (rebuilt BASIC for programs made by this compiler). Tape errors carry [mm:ss.ms].
+            if (TapeFormats.IsProgramFile(path))
+            {
+                bool rebuilt;
+                return Decompiler.ListingForCompiler(TapeFormats.Load(path), Path.GetFileName(path), out rebuilt);
+            }
             byte[] b = File.ReadAllBytes(path);
             try
             {

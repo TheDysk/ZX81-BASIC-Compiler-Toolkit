@@ -13,6 +13,7 @@
 // =====================================================================================
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.IO;
 using System.Text;
 
@@ -33,10 +34,43 @@ namespace ZX81Compiler
         /// <summary>Extensions the toolset can open.</summary>
         public static readonly string[] Extensions = { ".p", ".81", ".p81", ".o", ".80", ".wav", ".tzx" };
 
-        /// <summary>Filter string for open dialogs.</summary>
-        public const string OpenFilter = "ZX81 programs and tapes (*.p;*.81;*.p81;*.o;*.80;*.wav;*.tzx)|*.p;*.81;*.p81;*.o;*.80;*.wav;*.tzx|" +
-            "ZX81 programs (*.p;*.81)|*.p;*.81|Programs with names (*.p81)|*.p81|ZX80 programs (*.o;*.80)|*.o;*.80|" +
-            "Cassette audio (*.wav)|*.wav|Tape images (*.tzx)|*.tzx|All files (*.*)|*.*";
+        // Every kind of file, for the Open dialogs: name and extensions. Windows' Open
+        // dialog matches extensions whatever their case.
+        static readonly string[][] ProgramTypes = {
+            new[] { "ZX81 programs", "*.p;*.81" },
+            new[] { "ZX81 programs with their tape name", "*.p81" },
+            new[] { "ZX80 programs", "*.o;*.80" },
+            new[] { "Cassette audio recordings", "*.wav" },
+            new[] { "TZX tape images", "*.tzx" },
+        };
+        static readonly string[][] ListingTypes = {
+            new[] { "ZX81 BASIC listings", "*.txt;*.bas;*.b81" },
+        };
+
+        /// <summary>An Open dialog filter: first everything together, then each kind on its
+        /// own, then All files.</summary>
+        static string MakeFilter(string allName, IEnumerable<string[]> types)
+        {
+            var list = types.ToList();
+            string all = string.Join(";", list.Select(t => t[1]));
+            var parts = new List<string> { allName + " (" + all.Replace(";", ", ") + ")|" + all };
+            foreach (var t in list) parts.Add(t[0] + " (" + t[1].Replace(";", ", ") + ")|" + t[1]);
+            parts.Add("All files (*.*)|*.*");
+            return string.Join("|", parts);
+        }
+
+        /// <summary>Open dialog filter for the decompiler and the .P Toolkit: programs and tapes.</summary>
+        public static readonly string OpenFilter = MakeFilter("All ZX81 / ZX80 programs and tapes", ProgramTypes);
+
+        /// <summary>Open dialog filter for the compiler: BASIC listings, and programs and
+        /// tapes (which are opened as BASIC through the decompiler).</summary>
+        public static readonly string CompilerOpenFilter = MakeFilter("All listings, programs and tapes", ListingTypes.Concat(ProgramTypes));
+
+        /// <summary>Is this a program or tape (rather than a text listing), by its extension?</summary>
+        public static bool IsProgramFile(string path)
+        {
+            return Extensions.Contains(Path.GetExtension(path).ToLowerInvariant());
+        }
 
         /// <summary>Is this one of the formats that has to be converted (not a plain .p)?</summary>
         public static bool NeedsConversion(string path)

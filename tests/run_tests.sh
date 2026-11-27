@@ -93,6 +93,11 @@ for f in t1 clock; do
 done
 mono build/zx81dc.exe /tmp/zx81tapes/clock.wav --txt /tmp/zx81tapes/clock_wav2.txt > /tmp/zx81tapes/clock.out
 grep -q "WAV audio" /tmp/zx81tapes/clock.out && echo "zx81dc notes the .wav: ok" || echo "zx81dc notes the .wav: FAIL"
+for f in t1.wav clock.tzx; do
+  mono build/zx81c.exe /tmp/zx81tapes/$f /tmp/zx81tapes/re_$f.p > /dev/null
+  src=tests/${f%.*}.p; [ -f $src ] || src=examples/${f%.*}.p
+  cmp -s /tmp/zx81tapes/re_$f.p $src && echo "zx81c compiles $f back to an identical .p: ok" || echo "zx81c compiles $f: DIFFERENT"
+done
 mono build/zx81dc.exe /tmp/zx81tapes/zx80demo.o --txt /tmp/zx81tapes/zx80demo.txt > /dev/null
 grep -q 'PRINT "HELLO ZX80"' /tmp/zx81tapes/zx80demo.txt && grep -q "LET A=12-3" /tmp/zx81tapes/zx80demo.txt && echo "zx81dc reads a ZX80 .o: ok" || echo "zx81dc reads a ZX80 .o: FAIL"
 head -c 300000 /tmp/zx81tapes/t1.wav > /tmp/zx81tapes/cut.wav

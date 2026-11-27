@@ -70,7 +70,7 @@ namespace ZX81Compiler
             var menu = new MenuStrip();
             var file = new ToolStripMenuItem("&File");
             file.DropDownItems.Add(new ToolStripMenuItem("&New", null, (s, e) => NewListing(), Keys.Control | Keys.N));
-            file.DropDownItems.Add(new ToolStripMenuItem("&Open listing...", null, (s, e) => OpenListing(), Keys.Control | Keys.O));
+            file.DropDownItems.Add(new ToolStripMenuItem("&Open listing, program or tape...", null, (s, e) => OpenListing(), Keys.Control | Keys.O));
             file.DropDownItems.Add(new ToolStripMenuItem("&Save listing", null, (s, e) => SaveListing(false), Keys.Control | Keys.S));
             file.DropDownItems.Add(new ToolStripMenuItem("Save listing &as...", null, (s, e) => SaveListing(true)));
             file.DropDownItems.Add(new ToolStripSeparator());
@@ -208,21 +208,27 @@ namespace ZX81Compiler
         void OpenListing()
         {
             if (!ConfirmDiscard()) return;
-            using (var d = new OpenFileDialog { Filter = "ZX81 BASIC listings (*.txt;*.bas;*.b81)|*.txt;*.bas;*.b81|All files (*.*)|*.*", Title = "Open ZX81 BASIC listing" })
+            using (var d = new OpenFileDialog { Filter = TapeFormats.CompilerOpenFilter, Title = "Open a ZX81 BASIC listing, program or tape" })
                 if (d.ShowDialog(this) == DialogResult.OK) LoadListing(d.FileName);
         }
 
-        /// <summary>Load a listing file into the editor.</summary>
+        /// <summary>Load a listing file into the editor. A program or tape (.p, .p81, ZX80
+        /// .o, .wav, .tzx) is turned into BASIC by the decompiler and opened as a new,
+        /// unsaved listing.</summary>
         public void LoadListing(string path)
         {
+            bool program = TapeFormats.IsProgramFile(path);
             try
             {
-                string text = Cli.ReadListing(path);
+                Cursor = Cursors.WaitCursor;
+                string text;
+                try { text = Cli.ReadListing(path); }
+                finally { Cursor = Cursors.Default; }
                 // A Windows TextBox needs \r\n line endings; files may have just \n
                 editor.Text = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
-                listingPath = path;
+                listingPath = program ? null : path;   // Save asks for a name for a listing made from a program
                 outputPath = null;
-                dirty = false;
+                dirty = program;
                 messages.Items.Clear();
                 // How big will it be? A trial compile (nothing is saved) tells the user
                 // straight away whether the program fits the ZX81's RAM.
@@ -230,8 +236,14 @@ namespace ZX81Compiler
                 string est = Compiler.Estimate(editor.Text, GetOptions());
                 Cursor = Cursors.Default;
                 AddLines(est);
-                status.Text = "Loaded " + path + "  -  " + est.Split('\n').Last();
+                status.Text = (program ? "Opened " + path + " as BASIC (save it as a listing to keep it)" : "Loaded " + path) + "  -  " + est.Split('\n').Last();
                 UpdateTitle();
+            }
+            catch (TapeDecodeException ex)
+            {
+                MessageBox.Show(this, "Could not read the tape in " + Path.GetFileName(path) + ":\n\n" + ex.Message +
+                    (ex.Seconds >= 0 ? "\n\nThe problem is " + TapeDecodeException.Stamp(ex.Seconds) + " (minutes:seconds.milliseconds) into the recording." : ""),
+                    "Tape could not be read", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             catch (Exception ex) { MessageBox.Show(this, "Could not open the file:\n" + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error); }
         }
@@ -393,6 +405,7 @@ namespace ZX81Compiler
 The listing is a plain text file, one numbered ZX81 BASIC line per text line, for example:
     10 PRINT AT 0,0;""\00\00\2d\85\17\17\17\2b\2e\33\29""
 The compiler turns it into a .p file with the machine code in line 0 (a REM) and line 10 RAND USR 16514, which runs it. By default the program starts by itself after loading. It needs a ZX81 with 16K RAM, or a 32K or 64K RAM pack (see below).
+You can also open a program or tape (.p, .81, .p81, a ZX80 .o or .80, a .wav recording or a .tzx image). Its BASIC opens as a new listing: for a program made by this compiler, the BASIC rebuilt from its machine code; otherwise the BASIC as stored.
 
 # Special characters in strings
 \hh :: Any ZX81 character code in hex, e.g. \80 (black square), \85, \17 (*), \00 (space). Keyword codes (\C1 and up) print as the keyword text; \C0 is the """" quote image.
