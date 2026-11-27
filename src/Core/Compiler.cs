@@ -49,7 +49,12 @@ namespace ZX81Compiler
         public string Listing;            // assembly listing (if Options.MakeListing)
         public List<Diagnostic> Diagnostics = new List<Diagnostic>();   // errors and warnings
         public int CodeSize, VarsAddress, VarsSize, ProgramLines;       // figures for the summary
-        public string Summary;            // one-line summary shown after a successful compile
+        public int Ram = 16;              // RAM the program was compiled for (Options.Ram)
+        public int MemoryEnd;             // first byte after the variables (0 if the layout wasn't reached)
+        public bool UsesCalc;             // uses the ROM calculator (extra room after E_LINE)
+        /// <summary>Summary shown after a successful compile: several lines (sizes in bytes
+        /// and K, where things go, how much memory is left), separated by newlines.</summary>
+        public string Summary;
         public string Symbols = "";       // label table, appended to the .asm listing
     }
 
@@ -115,6 +120,9 @@ namespace ZX81Compiler
             }
 
             int end = res.VarsAddress + res.VarsSize;
+            res.Ram = opt.Ram;
+            res.MemoryEnd = end;
+            res.UsesCalc = gen.UsesCalc;
             string err = CheckMemory(opt, res.CodeSize, gen.UsesCalc, end);
             if (err != null)
             {
@@ -124,9 +132,86 @@ namespace ZX81Compiler
 
             res.PFile = BuildPFile(code, opt.Autorun);
             res.Success = true;
-            res.Summary = string.Format("{0} BASIC lines compiled for {7}K RAM. Machine code: {1} bytes at 16514-{2}. Variables: {3} bytes at {4}-{5}. File size: {6} bytes.",
-                lines.Count, code.Length, CodeStart + code.Length - 1, res.VarsSize, res.VarsAddress, end - 1, res.PFile.Length, opt.Ram);
+            res.ProgramLines = lines.Count;
+            res.Summary = string.Format("Compiled {0} BASIC lines for a ZX81 with {1}K RAM.", lines.Count, opt.Ram) + "\n" +
+                SizeLines(res) + "\n" + ".p file: " + Size(res.PFile.Length) + ".";
             return res;
+        }
+
+        // ---------------- sizes for people ----------------
+
+        /// <summary>A size as "3,456 bytes (3.38K)" (1K = 1024 bytes).</summary>
+        public static string Size(int bytes)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            return bytes.ToString("N0", inv) + " bytes (" + (bytes / 1024.0).ToString("0.00", inv) + "K)";
+        }
+
+        /// <summary>The size lines of a compile (successful, or one that only failed on
+        /// memory): machine code, variables, and the memory used and left.</summary>
+        public static string SizeLines(CompileResult r)
+        {
+            var sb = new StringBuilder();
+            sb.Append("Machine code: " + Size(r.CodeSize) + " at " + CodeStart + "-" + (CodeStart + r.CodeSize - 1) + ".\n");
+            sb.Append("Variables: " + Size(r.VarsSize) + " at " + r.VarsAddress + "-" + (r.MemoryEnd - 1) + " (made when the program runs; not in the .p file).\n");
+            sb.Append(MemoryLine(r));
+            return sb.ToString();
+        }
+
+        /// <summary>How much of the RAM the program uses, and what is left for the stack.</summary>
+        static string MemoryLine(CompileResult r)
+        {
+            if (r.Ram == 16)
+            {
+                int used = r.MemoryEnd - 0x4000;               // 16384 up to the end of the variables
+                int left = MemoryTop - StackReserve - r.MemoryEnd;
+                return "Memory: " + Size(used) + " of the 16K RAM used (program, screen, workspace and variables); " +
+                    (left >= 0 ? "about " + Size(left) + " left." : "too much by " + Size(-left) + ".");
+            }
+            int low = VarsAddress(r.CodeSize, r.UsesCalc) - 0x4000;      // below 32K: program, screen and workspace
+            int top = r.Ram == 32 ? 0xC000 : 0x10000;
+            int high = r.MemoryEnd - HighVars, room = top - StackReserve - HighVars;
+            return "Memory: below 32K " + Size(low) + " used (program, screen and workspace; about " + Size(Math.Max(0, MemoryTop - StackReserve - low - 0x4000)) +
+                " left); above 32K " + Size(high) + " of about " + Size(room) + " used by the variables.";
+        }
+
+        /// <summary>Compile the listing just to see how big it will be: used by the GUI when
+        /// a listing is loaded. Says whether it fits the RAM chosen in opt, and if it doesn't
+        /// fit 16K, whether it would fit a 32K or 64K RAM pack. Never throws.</summary>
+        public static string Estimate(string listing, Options opt)
+        {
+            try
+            {
+                var o = new Options { Autorun = opt.Autorun, BreakCheck = opt.BreakCheck, LowerIsInverse = opt.LowerIsInverse, MaxString = opt.MaxString, Ram = opt.Ram, MakeListing = false };
+                var r = Compile(listing, o);
+                if (r.MemoryEnd == 0)
+                {
+                    int errs = r.Diagnostics.Count(d => d.IsError);
+                    return "Estimated size: not known yet - the listing has " + errs + " error" + (errs == 1 ? "" : "s") + " (press F7 to check the syntax and see them).";
+                }
+                string fits;
+                if (r.Success)
+                    fits = "It fits a ZX81 with " + o.Ram + "K RAM.";
+                else
+                {
+                    fits = "It does NOT fit a ZX81 with " + o.Ram + "K RAM.";
+                    foreach (int bigger in new[] { 32, 64 })
+                    {
+                        if (bigger <= o.Ram) continue;
+                        o.Ram = bigger;
+                        var rb = Compile(listing, o);
+                        if (rb.Success) { fits += " It would fit a " + bigger + "K RAM pack (choose " + bigger + "K in the RAM box)."; break; }
+                        if (rb.Diagnostics.Any(d => d.IsError && d.Message.StartsWith("the machine code is too big")))
+                        {
+                            fits += " The machine code itself is too big for any ZX81, whatever RAM is fitted: it has to fit below 32K (32768) with the screen.";
+                            break;
+                        }
+                        if (bigger == 64) fits += " It is too big even for a 64K RAM pack.";
+                    }
+                }
+                return "Estimated size when compiled:\n" + SizeLines(r) + "\n" + fits;
+            }
+            catch (Exception ex) { return "Estimated size: not known (" + ex.Message + ")."; }
         }
 
         /// <summary>Where the variables will go, for a given code size. Must match the

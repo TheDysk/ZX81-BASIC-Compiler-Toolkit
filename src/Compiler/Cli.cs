@@ -66,7 +66,13 @@ namespace ZX81Compiler
             string text = ReadListing(input);
             var res = Compiler.Compile(text, opt);
             foreach (var d in res.Diagnostics) outw.WriteLine(d);
-            if (!res.Success) { outw.WriteLine("Compilation failed."); return 1; }
+            if (!res.Success)
+            {
+                // out of memory: still show the sizes, to help decide what to cut
+                if (res.MemoryEnd != 0) outw.WriteLine(Compiler.SizeLines(res));
+                outw.WriteLine("Compilation failed.");
+                return 1;
+            }
             File.WriteAllBytes(output, res.PFile);
             if (asmFile != null && res.Listing != null) File.WriteAllText(asmFile, res.Listing + res.Symbols);
             outw.WriteLine(res.Summary);

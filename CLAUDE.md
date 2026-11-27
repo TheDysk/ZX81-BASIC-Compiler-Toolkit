@@ -78,6 +78,7 @@ Each exe has its own `Main`, selected with `-main:` in `build.sh`/`build.bat`. I
 | `Charset.cs` | ASCII/Unicode to ZX81 codes, block graphics, token table. |
 | `Z80Asm.Undefined` | Optional resolver for unknown symbols (used by `Recover` to assemble runtime chunks on their own). Leave null for normal compiles. |
 | `src/Compiler/Cli.cs` | Command-line front end, plus `ReadListing` (UTF-8 with a CP-1252 fallback). |
+| `Compiler.Size / SizeLines / Estimate` | Sizes for people ("3,456 bytes (3.38K)"), the summary lines shared by CLI and GUI, and the trial compile the GUI runs when a listing is opened (fits the chosen RAM? would 32K/64K?). `CompileResult.MemoryEnd` is non-zero once the layout was worked out, even if the compile then failed on memory, so sizes can still be shown. |
 | `src/Compiler/MainForm.cs` | WinForms GUI. Its `HelpText` is the user-facing list of supported BASIC, so update it when features change. |
 
 ## Memory layout of a compiled program

@@ -17,8 +17,6 @@ A compiled program looks like this on the ZX81:
 
 Load it in an emulator such as EightyOne, or on a real ZX81 with a 16K, 32K or 64K RAM pack. By default it starts by itself after loading.
 
-All three tools are at version **V1.00**. Each shows its version in its window title and **Help → About** box. The command-line versions print it with `--version`, and it is stored in each `.exe` file (on Windows: right-click → Properties → Details).
-
 ## Download and run
 
 Build the tools yourself (below), or take the executables from a release. They need .NET Framework 4, which is already part of Windows 10/11.
@@ -50,11 +48,22 @@ All three GUIs accept files dragged onto their windows.
 
 GUI: open a listing (`.txt`/`.bas`) or type one in, press **F5**, and choose where to save the `.p` file. **Help → Supported BASIC** lists everything in detail.
 
+When a listing is opened, the compiler does a trial compile and shows the **expected size** straight away: machine code, variables, and how much of the RAM it uses. It also says whether the program fits a 16K ZX81 (or the RAM chosen in the RAM box), and if not, whether a 32K or 64K RAM pack would do. After compiling, both the window and `zx81c` show the sizes in bytes and K, for example:
+
+```
+Compiled 25 BASIC lines for a ZX81 with 16K RAM.
+Machine code: 2,778 bytes (2.71K) at 16514-19291.
+Variables: 579 bytes (0.57K) at 21129-21707 (made when the program runs; not in the .p file).
+Memory: 5,324 bytes (5.20K) of the 16K RAM used (program, screen, workspace and variables); about 10,548 bytes (10.30K) left.
+.p file: 3,712 bytes (3.63K).
+```
+
+If a program doesn't fit, the sizes are still shown with the error.
+
 Command line:
 
 ```
 zx81c listing.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--asm listing.asm]
-zx81c --version
 ```
 
 | Option | Meaning |
@@ -185,7 +194,6 @@ Command line:
 
 ```
 zx81dc program.p [--txt file] [--basic file] [--asm file] [--p file] [--p-from listing|basic] [--report]
-zx81dc --version
 ```
 
 With no options it writes `program.txt`, plus `program.bas` if the BASIC could be rebuilt and `program.asm` if there is machine code.

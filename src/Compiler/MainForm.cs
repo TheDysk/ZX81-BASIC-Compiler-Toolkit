@@ -216,7 +216,13 @@ namespace ZX81Compiler
                 outputPath = null;
                 dirty = false;
                 messages.Items.Clear();
-                status.Text = "Loaded " + path;
+                // How big will it be? A trial compile (nothing is saved) tells the user
+                // straight away whether the program fits the ZX81's RAM.
+                Cursor = Cursors.WaitCursor;
+                string est = Compiler.Estimate(editor.Text, GetOptions());
+                Cursor = Cursors.Default;
+                AddLines(est);
+                status.Text = "Loaded " + path + "  -  " + est.Split('\n').Last();
                 UpdateTitle();
             }
             catch (Exception ex) { MessageBox.Show(this, "Could not open the file:\n" + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error); }
@@ -282,7 +288,7 @@ namespace ZX81Compiler
         {
             var res = RunCompiler();
             ShowDiagnostics(res);
-            if (res.Success) { messages.Items.Add(res.Summary); status.Text = "No errors."; }
+            if (res.Success) { AddLines(res.Summary); status.Text = "No errors. Machine code " + Compiler.Size(res.CodeSize) + "."; }
             else status.Text = "Errors found - see messages.";
         }
 
@@ -294,6 +300,7 @@ namespace ZX81Compiler
             ShowDiagnostics(res);
             if (!res.Success)
             {
+                if (res.MemoryEnd != 0) AddLines(Compiler.SizeLines(res));   // out of memory: show the sizes
                 status.Text = "Compilation failed - see messages.";
                 if (messages.Items.Count > 0) messages.SelectedIndex = 0;
                 return;
@@ -320,9 +327,15 @@ namespace ZX81Compiler
                 MessageBox.Show(this, "Could not write the file:\n" + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            messages.Items.Add(res.Summary);
+            AddLines(res.Summary);
             messages.Items.Add("Saved " + outputPath);
-            status.Text = "Saved " + outputPath + "  (" + res.PFile.Length + " bytes)";
+            status.Text = "Saved " + outputPath + "  -  machine code " + Compiler.Size(res.CodeSize) + ", .p file " + Compiler.Size(res.PFile.Length);
+        }
+
+        /// <summary>Add text to the messages list, one item per line.</summary>
+        void AddLines(string text)
+        {
+            foreach (var line in text.Split('\n')) if (line.Length > 0) messages.Items.Add(line);
         }
 
         /// <summary>Double-click on a message: select the line it refers to in the editor.
@@ -413,6 +426,12 @@ WHOLE NUMBERS AND FLOATING POINT
   Errors in floating point (SQR -1, LN 0, ...) stop the program with
   the ZX81 report code, e.g. A/10. VAL works out any expression in its
   string, but can't see the program's variables.
+
+SIZES
+  When a listing is opened, a trial compile shows the expected size of
+  the machine code and variables, and whether it fits the ZX81's RAM
+  (and if not, whether a 32K or 64K RAM pack would). After compiling,
+  the sizes are shown in bytes and K.
 
 RAM PACKS: 16K, 32K AND 64K
   Choose the RAM the program is for (RAM box, or --ram 16|32|64).
