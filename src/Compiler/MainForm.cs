@@ -37,7 +37,7 @@ namespace ZX81Compiler
         }
     }
 
-    public class MainForm : Form
+    public partial class MainForm : Form
     {
         // ---- controls ----
         readonly TextBox editor;                               // the BASIC listing
@@ -87,7 +87,7 @@ namespace ZX81Compiler
             help.DropDownItems.Add(new ToolStripMenuItem("&How it works / Supported BASIC...", null, (s, e) => ShowHelp(), Keys.F1));
             help.DropDownItems.Add(new ToolStripMenuItem("&About", null, (s, e) => MessageBox.Show(this,
                 "ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler) + "\n\nCompiles a ZX81 BASIC text listing into Z80 machine code held in line 0 (REM), with line 10 RAND USR 16514, saved as a .p file.\n\nTarget: ZX81 with 16K, 32K or 64K RAM." + UiCommon.AboutText, "About")));
-            menu.Items.Add(file); menu.Items.Add(build); menu.Items.Add(options); menu.Items.Add(help);
+            menu.Items.Add(file); menu.Items.Add(build); menu.Items.Add(BuildToolsMenu()); menu.Items.Add(options); menu.Items.Add(help);
 
             // ---- toolbar ----
             var tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
@@ -100,6 +100,8 @@ namespace ZX81Compiler
             tools.Items.Add(new ToolStripButton("Check (F7)", null, (s, e) => CheckOnly()));
             tools.Items.Add(new ToolStripSeparator());
             tools.Items.Add(new ToolStripButton("Compile && Run  (Ctrl+F5)", null, (s, e) => CompileAndRun()));
+            tools.Items.Add(new ToolStripSeparator());
+            tools.Items.Add(new ToolStripButton("Characters (F8)", null, (s, e) => TogglePalette()) { ToolTipText = "Show or hide the ZX81 character palette: click a character to type it" });
 
             // ---- options panel ----
             // A FlowLayoutPanel lays its controls out left to right, wrapping onto another
@@ -161,6 +163,8 @@ namespace ZX81Compiler
             // editor above, messages below, with a draggable divider
             var split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal };
             split.Panel1.Controls.Add(editor);
+            palette = BuildPalette();                 // Tools > Character Palette (F8); docked right of the editor
+            split.Panel1.Controls.Add(palette);
             var msgGroup = new GroupBox { Text = "Messages (double-click to go to the line)", Dock = DockStyle.Fill };
             msgGroup.Controls.Add(messages);
             split.Panel2.Controls.Add(msgGroup);
@@ -423,7 +427,24 @@ The listing is a plain text file, one numbered ZX81 BASIC line per text line, fo
 The compiler turns it into a .p file with the machine code in line 0 (a REM) and line 10 RAND USR 16514, which runs it. By default the program starts by itself after loading. It needs a ZX81 with 16K RAM, or a 32K or 64K RAM pack (see below).
 You can also open a program or tape (.p, .81, .p81, a ZX80 .o or .80, a .wav recording or a .tzx image). Its BASIC opens as a new listing: for a program made by this compiler, the BASIC rebuilt from its machine code; otherwise the BASIC as stored.
 
+# Labels instead of line numbers
+Lines can leave out their numbers and use labels for GOTO and GOSUB:
+    @start:
+    CLS
+    @loop: PRINT ""HI"";
+    IF INKEY$="""" THEN GOTO @loop
+    GOSUB @beep
+    GOTO @start
+    9000 @beep: PRINT ""BEEP""
+    RETURN
+- @name: defines a label, on a line of its own (it labels the next line) or in front of a statement. Names are letters, digits and _, and are not case sensitive.
+- @name anywhere else in a statement (outside strings) becomes that line's number: after GOTO, GO SUB, IF ... THEN, RUN, LIST, or in an expression such as GOTO @table+N*10.
+- Lines without a number are numbered 10 after the line before; explicit numbers are kept, and unnumbered lines that would run into one are spaced out to fit.
+- Labels are used when the listing has an @name:, a #LABELS line, or with --labels on the command line. Undefined or duplicate labels, no room between two numbers, and numbers past 9999 are errors on the text line concerned.
+- Tools > Convert Labels to Line Numbers makes an ordinary numbered listing. Tools > Renumber Lines... renumbers from a start in steps you choose; GOTO, GO SUB, THEN, RUN and LIST followed by a line number change to match, and a calculated target (GOTO 100+N) gets a warning to check it.
+
 # Special characters in strings
+Tools > Character Palette (F8, or the Characters button) shows every ZX81 character, block graphic and inverse character. Click one to type what the listing needs for it at the cursor.
 \hh :: Any ZX81 character code in hex, e.g. \80 (black square), \85, \17 (*), \00 (space). Keyword codes (\C1 and up) print as the keyword text; \C0 is the """" quote image.
 \'' \.. \:: :: Block graphics, zmakebas/ZXText2P style: two characters for the left and right halves; ' is the top, . the bottom and : both.
 %A :: An inverse character (ZXText2P style).

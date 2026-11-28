@@ -88,6 +88,13 @@ namespace ZX81Compiler
             if (directive != null && opt.Numbers != chosen && chosen != NumberMode.FullFloat)
                 res.Diagnostics.Add(new Diagnostic { BasicLine = -1, Message = "the line " + directive + " in the listing sets the numbers to " +
                     NumberModes.Display[(int)opt.Numbers].ToLowerInvariant() + " (instead of " + NumberModes.Display[(int)chosen].ToLowerInvariant() + ")" });
+            // labels and unnumbered lines (Labels.cs): numbered first, keeping every text
+            // line in its place so messages still point at the right line
+            if (opt.Labels || Labels.Wanted(text))
+            {
+                text = Labels.Number(text, true, res.Diagnostics);
+                if (text == null) return res;
+            }
             var lines = ParseProgram(text, opt, res.Diagnostics);
             res.ProgramLines = lines.Count;
             if (res.Diagnostics.Any(d => d.IsError)) return res;
@@ -199,7 +206,8 @@ namespace ZX81Compiler
         {
             try
             {
-                var o = new Options { Autorun = opt.Autorun, BreakCheck = opt.BreakCheck, LowerIsInverse = opt.LowerIsInverse, MaxString = opt.MaxString, Ram = opt.Ram, MakeListing = false };
+                var o = opt.Clone();      // every option (RAM, numbers, labels ...), without the listing
+                o.MakeListing = false;
                 var r = Compile(listing, o);
                 if (r.MemoryEnd == 0)
                 {

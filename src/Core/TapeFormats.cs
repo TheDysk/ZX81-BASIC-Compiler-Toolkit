@@ -81,13 +81,14 @@ namespace ZX81Compiler
 
         /// <summary>Open a file of any supported format. Throws TapeDecodeException (audio
         /// errors carry a [mm:ss.ms] time) or IOException.</summary>
-        public static LoadedProgram Load(string path)
+        public static LoadedProgram Load(string path, AudioOptions audio = null)
         {
-            return Load(File.ReadAllBytes(path), Path.GetExtension(path), Path.GetFileNameWithoutExtension(path));
+            return Load(File.ReadAllBytes(path), Path.GetExtension(path), Path.GetFileNameWithoutExtension(path), audio);
         }
 
-        /// <summary>Open file contents, given the file's extension (".wav" ...) and name.</summary>
-        public static LoadedProgram Load(byte[] data, string ext, string fileName)
+        /// <summary>Open file contents, given the file's extension (".wav" ...) and name.
+        /// audio: settings for .wav recordings (null = the defaults).</summary>
+        public static LoadedProgram Load(byte[] data, string ext, string fileName, AudioOptions audio = null)
         {
             ext = (ext ?? "").ToLowerInvariant();
             if (ext == "") ext = Sniff(data);
@@ -97,8 +98,9 @@ namespace ZX81Compiler
             {
                 case ".wav":
                     r.Format = "WAV audio";
-                    progs = TapeDecode.ReadWav(data);
+                    progs = TapeDecode.ReadWav(data, audio);
                     TakeFirst(r, progs, true);
+                    if (audio != null && !audio.IsDefault) r.Notes.Add("read with " + audio);
                     break;
                 case ".tzx":
                     r.Format = "TZX tape image";
@@ -123,7 +125,7 @@ namespace ZX81Compiler
                 default:
                     {
                         string guess = Sniff(data);
-                        if (guess != ".p" && guess != ext) return Load(data, guess, fileName);   // e.g. a .wav saved with another extension
+                        if (guess != ".p" && guess != ext) return Load(data, guess, fileName, audio);   // e.g. a .wav saved with another extension
                         r.Format = "ZX81 .p file";
                         r.P = data;
                         break;

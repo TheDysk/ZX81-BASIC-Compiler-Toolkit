@@ -8,7 +8,7 @@ Guidance for working on this repository: a toolset for Sinclair ZX81 `.p` files.
 
 All five programs share `src/Core`. The three GUIs also share `src/UI`.
 
-**Versions:** every tool is V1.00. The numbers live in `src/Core/Versions.cs` (shown in titles, About boxes and `--version`) and in the `[assembly: AssemblyVersion]` lines at the top of `src/Compiler/Cli.cs`, `src/Decompiler/DecompilerCli.cs`, `src/Decompiler/DecompilerForm.cs` and `src/Browser/BrowserForm.cs` (stored in the .exe). Change both together when releasing a tool.
+**Versions:** every tool is V0.9 (not yet fully tested on Windows). The numbers live in `src/Core/Versions.cs` (shown in titles, About boxes and `--version`) and in the `[assembly: AssemblyVersion]` lines at the top of `src/Compiler/Cli.cs`, `src/Decompiler/DecompilerCli.cs`, `src/Decompiler/DecompilerForm.cs` and `src/Browser/BrowserForm.cs` (stored in the .exe). Change both together when releasing a tool.
 
 ## Build and test
 
@@ -28,6 +28,8 @@ Test tooling needs `python3` and `pip install z80` (a Z80 emulator with a disass
 - `mono build/zx81dc.exe prog.p --report --txt out.txt --asm out.asm --p back.p` decompiles. `cmp prog.p back.p` should show no difference.
 - `tests/cs/ToolTest.cs` (built and run by `run_tests.sh`) checks for each `.p` given that listing → `.p` is identical, and for programs made by our compiler that the rebuilt BASIC is verified. `ToolTest.exe --tape f.p` writes `/tmp/zx81test.wav`/`.tzx`, and `tests/tapecheck.py f.p wav tzx TEST` decodes both and compares them with name + file. `tests/cs/CoreTest.cs` is an older round-trip driver that prints per-file details.
 - Test programs: `tests/t1`-`t12` are float-islands programs (compiled with `--float islands`); `tests/f1`-`f6` are full floating point (f1-f5 are compared with the ROM's interpreter, f6 has typed INPUT and `tests/expected/f6.txt`). run_tests also compiles t1-t11 and the examples in full floating point as `tests/full_*.p` and decompiles them. Don't run `zx81dc` on `tests/*.p` without `--basic`/`--txt` paths: by default it writes `tests/<name>.bas`, overwriting the test source.
+- `tests/cs/LabelTest.cs`, `CtlTest.cs` and `EditTest.cs` (labels and renumbering, control files, the Toolkit's editors) are built and run by run_tests.sh like TapeTest.
+- `.github/workflows/release.yml` runs on a `v*` tag: run_tests.sh on Ubuntu (no ROM, so the ROM tests are skipped; any FAIL / DIFFERENT / NOT VERIFIED / Unhandled line fails the job), build.bat on Windows, then a GitHub Release with `ZX81-Toolkit-win.zip` (the Windows-built exes, README.md, LICENSE, examples/). Keep run_tests.sh passing without `tests/zx81.rom`.
 - `tests/cs/TapeTest.cs` (built and run by `run_tests.sh` as `/tmp/tapetest.exe f.p …`) round-trips each file through `.wav` (several sample formats, quiet/noisy/fast/inverted), `.tzx`, `.p81`, damages recordings and checks the `[mm:ss.ms]` of each error, tests the ZX80 conversion both ways, `HiddenNumberOffsets` and `InjectRem`. `tapetest.exe --write-tapes DIR f.p …` just writes the tape files (and a small ZX80 `.o`) for the `zx81dc --extract` checks. Emulator launching is tested with a stand-in shell script set up through `ZX81TOOLSET_INI`.
 - `.asm` from the decompiler should reassemble to identical bytes; check with `pasmo` (`apt install pasmo`, then `pasmo --bin out.asm out.bin` and compare with the bytes at the ORG address).
 - GUIs can be smoke-tested on Linux with `xvfb-run mono build/ZX81PToolkit.exe file.p` plus `xdotool`/ImageMagick `import` for screenshots. Mono's WinForms isn't Windows, so layouts should still be checked on Windows.
@@ -59,12 +61,12 @@ Test tooling needs `python3` and `pip install z80` (a Z80 emulator with a disass
 | Folder | Contents | Built into |
 |---|---|---|
 | `src/Core/` | Everything that isn't UI | all five exes |
-| `src/Compiler/` | `Cli.cs` (`CliMain`, `ReadListing`), `MainForm.cs` (`Program`, compiler GUI) | zx81c, ZX81BasicCompiler |
-| `src/Decompiler/` | `DecompilerCli.cs`, `DecompilerForm.cs` (`DecompilerProgram`) | zx81dc, ZX81Decompiler |
-| `src/Browser/` | `BrowserForm.cs` (`BrowserProgram`, menus, opening, exports), `BrowserTabs.cs` (partial class: the tabs, `MemoryMapPanel`, `Rtf` builder), `BrowserExtras.cs` (partial class: Run in Emulator, Play Audio, `.p81`/`.o` export, hidden-number editor, Inject Binary into REM) | ZX81PToolkit |
+| `src/Compiler/` | `Cli.cs` (`CliMain`, `ReadListing`), `MainForm.cs` (`Program`, compiler GUI), `MainFormTools.cs` (partial class: Tools menu - Renumber, Convert Labels - and the character palette, `EscapeFor`) | zx81c, ZX81BasicCompiler |
+| `src/Decompiler/` | `DecompilerCli.cs`, `DecompilerForm.cs` (`DecompilerProgram`), `DecompilerFormCtl.cs` (partial class: control files, Rename Label / Add Comment) | zx81dc, ZX81Decompiler |
+| `src/Browser/` | `BrowserForm.cs` (`BrowserProgram`, menus, opening, exports), `BrowserTabs.cs` (partial class: the tabs, `MemoryMapPanel`, `Rtf` builder), `BrowserExtras.cs` (partial class: Run in Emulator, Play Audio, Audio Import Options, `.p81`/`.o` export, hidden-number editor, Inject Binary into REM), `BrowserEditors.cs` (partial class: the 8x8 tile editor on the Graphics tab and drawing on the Screen tab) | ZX81PToolkit |
 | `src/UI/` | `UiCommon.cs` (fonts, `ShowHelp` = the Help > How it works window: each line of the help text is a paragraph that wraps to the window, with `# heading`, `- bullet`, `term :: meaning` and 4-space indented examples, rendered as RTF; save dialogs, drag-and-drop, `OpenProgram` = open any format and show tape errors with their `[mm:ss.ms]`, `AboutText`), `ZxRender.cs` (screen/tile bitmaps, ZX81 ROM font, char-set finder), `EmulatorDialog.cs` (`EmulatorUi.Configure`, `EmulatorUi.Run`) | the three GUIs |
 
-Each exe has its own `Main`, selected with `-main:` in `build.sh`/`build.bat`. If you add a source file to a folder, both build scripts pick it up (they compile `src/Core/*.cs` etc.), but check `build.bat` lists any new folder.
+Each exe has its own `Main`, selected with `-main:` in `build.sh`/`build.bat`. If you add a source file to a folder, both build scripts pick it up (they compile `src/Core/*.cs`, `src/Compiler/MainForm*.cs`, `src/Decompiler/DecompilerForm*.cs`, `src/Browser/*.cs` etc.), but check `build.bat` lists any new folder. The forms are partial classes split over those files.
 
 ## Compiler pipeline (src/Core)
 
@@ -77,6 +79,7 @@ Each exe has its own `Main`, selected with `-main:` in `build.sh`/`build.bat`. I
 | `Runtime.cs` | The runtime library as named assembly chunks with dependencies. Only the chunks that are used get emitted. |
 | `Z80Asm.cs` | Two-pass assembler for the Z80 subset we use: labels, `EQU`, `DB/DW/DS`, expressions with `+ - * /`, `$`, hex as `0FFh`/`$FF`/`0xFF`. |
 | `Compiler.cs` | Orchestration, memory layout and `.p` file writer (system variables, line 0 / line 10, expanded display file). |
+| `Labels.cs` | `@label:` listings and renumbering. `Labels.Number(text, keepLayout, diags)` turns labels and unnumbered lines into an ordinary numbered listing; `Compiler.Compile` calls it (with keepLayout, so every text line stays put and messages point at the right editor line) when `Options.Labels` (`--labels`), a `#LABELS` line or any `@name:` is present. `@name` references are replaced outside strings. `Labels.Renumber` remaps GOTO/GO SUB/THEN/RUN/LIST/LLIST + constant (a missing line maps to the next one, as the ZX81 would go there) and warns about calculated targets. Tested by `tests/cs/LabelTest.cs`. |
 | `Charset.cs` | ASCII/Unicode to ZX81 codes, block graphics, token table. |
 | `Z80Asm.Undefined` | Optional resolver for unknown symbols (used by `Recover` to assemble runtime chunks on their own). Leave null for normal compiles. |
 | `src/Compiler/Cli.cs` | Command-line front end, plus `ReadListing` (UTF-8 with a CP-1252 fallback). |
@@ -211,6 +214,10 @@ Fuzzing is the best check after changing CodeGen or Recover: generate random pro
 
 **Coupling rule:** `Recover.cs` reads the exact instruction patterns that `CodeGen.cs` writes. If you change code generation, run `tests/run_tests.sh`: the decompiler section must still say "BASIC rebuilt+verified" for every test program. If it doesn't, update the matching pattern handler in `Recover.cs`.
 
+### Control files (.ctl)
+
+`ControlFile.cs` parses LABEL / COMMENT / CODE / DATA (format in its header comment) and writes them back (`Save`). `CodeFinder.Analyze(p, ctl)` adds each CODE start as an entry and traces it, decodes CODE start..end linearly (`Linear`), then clears IsCode/InstrStarts in DATA ranges (tracing also stops at them) and adds both kinds of range as blocks (`MergeBlocks`). `CodeFinder.ToAsm(p, ca, name, ctl)` uses LABEL names for label lines and operands (`name+1` for the byte after), puts COMMENTs on lines of their own above the instruction or DB that holds the address, and lists the control file and comments outside every block in the header; DB runs stop at a control-file label or comment. `Decompiler.Run(p, name, ctl)` keeps it in `DecompileResult.Control`. zx81dc and the GUI load `program.ctl` next to the input automatically. Tested by `tests/cs/CtlTest.cs` (which also reassembles the `.asm` with `Z80Asm`).
+
 ### .P Toolkit notes
 
 The .P Toolkit was called the .P File Browser; the code still uses that name (`src/Browser/`, `BrowserForm`, `BrowserProgram`, `Versions.Browser`). Only what the user sees, and the exe name `ZX81PToolkit.exe`, changed.
@@ -221,6 +228,8 @@ The .P Toolkit was called the .P File Browser; the code still uses that name (`s
 - RAMTOP isn't in a `.p`, so the memory map asks which machine (1K…32K) to draw.
 - `converted` is set when the file came from a tape, `.p81` or ZX80 file; Run in Emulator then uses `ToolConfig.TempP` (also when `edited`), and `tapeName` keeps the name from the tape for exports.
 - The listing view records the BASIC line of every row in `listingRows` (Z80 rows under a REM belong to that REM). Double-click / right-click map a point → row → line, and the n-th `{=` in the row → the n-th offset from `HiddenNumberOffsets`. Edits go through `ReloadEdited`.
+- Editors (`BrowserEditors.cs`) change bytes only through `PEdit` (Core, tested by `tests/cs/EditTest.cs`): `SetScreenChar(s)` writes in place in an expanded display file (D_FILE+1+row*33+col; collapsed ones and keyword/76h codes are refused), `WriteBytes` writes a tile in place, `AddRemLine` rebuilds with `BuildP` (keeps display and variables, moves every pointer). Results are shown with `ReloadEdited`; `keepGraphicsView` stops `FillGraphicsDefaults` jumping back to the default tile address after Apply. Screen drawing works on a copy (`drawData`) while the mouse is down and reloads once on mouse-up.
+- `AudioOptions` (TapeDecode.cs: Threshold, Hysteresis, Invert) are passed through `TapeFormats.Load` and `UiCommon.OpenProgram`; the Toolkit keeps one instance for the session (Options > Audio Import Options), zx81dc has `--wav-threshold/--wav-hysteresis/--wav-invert`. The defaults must stay 0.20 / 0.15 / false: the tape tests depend on them.
 - Play Audio uses `System.Media.SoundPlayer.Play()` on a `MemoryStream` of `Tape.MakeWav`; progress is a timer against the known length (SoundPlayer has no position).
 
 ### Compiler: integer only (strict integer mode) and Compile & Run

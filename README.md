@@ -58,11 +58,13 @@ The environment variable `ZX81TOOLSET_INI` can point at another settings file.
   - **Integer only:** whole numbers only. Anything that would need floating point is an error.
 - The machine code (line 0) needs nothing but the ZX81 ROM: keyboard, FAST/SLOW, the calculator, the printer and the tape routines.
 - **Compile & Run** (Ctrl+F5) saves the `.p` file and starts the emulator (see [Emulator set-up](#emulator-set-up)).
+- **Labels instead of line numbers:** write `@loop:` and `GOTO @loop`, and leave the numbers out (see [Labels](#labels-instead-of-line-numbers)). **Tools → Renumber Lines** and **Tools → Convert Labels to Line Numbers** tidy a listing up.
+- **Character palette** (**Tools → Character Palette**, F8, or the **Characters** button): every ZX81 character, block graphic and inverse character; click one to type its escape at the cursor.
 - Programs can be compiled for a 16K, 32K or 64K RAM pack. With 32K or 64K, the variables, arrays and strings use the RAM above 32K (see [RAM packs](#ram-packs-16k-32k-and-64k)).
 
 ### Using the compiler
 
-GUI: open a listing (`.txt`/`.bas`/`.b81`) or type one in, press **F5**, and choose where to save the `.p` file. **Help → Supported BASIC** lists everything in detail.
+GUI: open a listing (`.txt`/`.bas`/`.b81`) or type one in, press **F5**, and choose where to save the `.p` file. **Help → How it works** (F1) lists everything in detail.
 
 When a listing is opened, the compiler does a trial compile and shows the **expected size** straight away: machine code, variables, and how much of the RAM it uses. It also says whether the program fits a 16K ZX81 (or the RAM chosen in the RAM box), and if not, whether a 32K or 64K RAM pack would do. After compiling, both the window and `zx81c` show the sizes in bytes and K, for example:
 
@@ -83,7 +85,7 @@ In every program's Open dialog, the file type list starts with all the types tha
 Command line:
 
 ```
-zx81c listing.txt [output.p] [--float full|islands|int] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--asm listing.asm] [--run] [--emulator path]
+zx81c listing.txt [output.p] [--float full|islands|int] [--labels] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--asm listing.asm] [--run] [--emulator path]
 ```
 
 | Option | Meaning |
@@ -91,6 +93,7 @@ zx81c listing.txt [output.p] [--float full|islands|int] [--no-autorun] [--no-bre
 | `--float full` | Full floating point, as the ZX81 (the default). See [Numbers](#numbers-full-floating-point-float-islands-or-integer-only). In the GUI this is the **Numbers** box. |
 | `--float islands` | Float islands: fast whole numbers, floating point only where an expression needs it |
 | `--float int` | Integer only: floating point is a compile error. `--strict-int` means the same. |
+| `--labels` | Lines may leave out their numbers, and `@name:` labels them (see [Labels](#labels-instead-of-line-numbers)). Also switched on by a `#LABELS` line or any `@name:` in the listing. |
 | `--no-autorun` | Don't start automatically after LOAD (type `RUN`) |
 | `--no-break` | Don't stop the program when SPACE (BREAK) is pressed. Use this for games that use SPACE. |
 | `--lower-inverse` | Lower-case letters inside strings become inverse video |
@@ -120,6 +123,33 @@ Special characters inside strings:
 | `%A` | Inverse character |
 | `""` | A quote mark |
 | `▘▝▀▖▌▞▛▒█▟▙▄▜▐▚▗` | Unicode block characters are also accepted |
+
+The **Tools → Character Palette** (F8) shows all 64 characters and their 64 inverse versions as the ZX81 draws them. Clicking one types what the listing needs for it at the cursor: the character itself, `%A` for an inverse letter, a Unicode block graphic (`▘`, `█` …), `""` for a quote, or `\hh` for the rest.
+
+### Labels instead of line numbers
+
+A listing can use labels for `GOTO` and `GOSUB` and leave out its line numbers:
+
+```basic
+@start:
+CLS
+LET N=0
+@loop: LET N=N+1
+PRINT N;" ";
+IF N<5 THEN GOTO @loop
+GOSUB @beep
+GOTO @start
+9000 @beep: PRINT "BEEP"
+RETURN
+```
+
+- `@name:` defines a label, on a line of its own (it labels the next line) or in front of a statement. Names are letters, digits and `_`, and are not case sensitive.
+- `@name` anywhere else in a statement, outside strings, becomes that line's number. It works after `GOTO`/`GO TO`, `GOSUB`/`GO SUB`, `IF … THEN`, `RUN` and `LIST`, and in expressions (`GOTO @table+N*10`).
+- **Mixed numbering:** lines without a number get one, 10 more than the line before (10 for the first). Explicit numbers are kept (`9000 @beep:` above). If unnumbered lines would run into the next explicit number, they are spaced out evenly in between.
+- Labels are used when the listing has an `@name:`, a line `#LABELS`, or with `--labels`. Then unnumbered lines are numbered even without any labels.
+- Errors name the text line they are on: a label that isn't defined, one defined twice (with the line of the first one), no room to number lines between two explicit numbers, or numbers past 9999.
+
+**Tools → Convert Labels to Line Numbers** replaces the labels with the numbers, giving an ordinary listing. **Tools → Renumber Lines** asks for the first number and the step, and renumbers the whole listing (numbering a labelled one first). `GOTO`, `GO SUB`, `THEN`, `RUN`, `LIST` and `LLIST` followed by a line number are changed to match; a number with no line of its own goes to the next line after it, as on the ZX81. A calculated target such as `GOTO 100+N` can't be changed, so each one gets a warning to check it.
 
 ### Supported BASIC
 
@@ -245,10 +275,26 @@ GUI: open a `.p` file (Ctrl+O, or drag it onto the window). Tapes and the other 
 
 The **File** menu saves the listing (`.txt`), the rebuilt BASIC (`.bas`) and the machine code (`.asm`), and **Make .p file from this tab** turns the Listing or BASIC tab into a new `.p` file. The rebuilt BASIC can also be opened in the compiler and compiled again.
 
+### Control files (.ctl)
+
+A control file tells the decompiler what it can't work out for itself, and names things in the `.asm`. It sits next to the program with the same name (`game.p` and `game.ctl`) and is then used automatically; `zx81dc --ctl file` or **File → Load Control File** uses another. One directive per line; lines starting with `;` or `#` are comments. Addresses are decimal (`16514`) or hex (`4082h`, `0x4082`, `$4082`):
+
+```
+; game.ctl
+LABEL   4082h main          name an address (instead of L4082)
+LABEL   4100h draw_ship
+COMMENT 4090h wait for a key   a comment line above that address
+CODE    4200h               code that no USR reaches (a jump table, a stack trick...)
+CODE    4300h 4380h         ... and decode the whole range, instruction by instruction
+DATA    4400h 64            these 64 bytes are data (DB), never code
+```
+
+In the GUI, right-click a line of the **Machine code** tab for **Rename Label** and **Add Comment**. The `.asm` is redrawn at once, and **File → Save Control File** keeps the changes (you are asked before they would be lost). The report says what the control file contains and lists any lines it didn't understand. The `.asm` still reassembles to the same bytes, with your names.
+
 Command line:
 
 ```
-zx81dc program.p [--txt file] [--basic file] [--asm file] [--p file] [--p-from listing|basic] [--extract file] [--report]
+zx81dc program.p [--txt file] [--basic file] [--asm file] [--p file] [--p-from listing|basic] [--extract file] [--ctl file] [--wav-threshold N] [--wav-hysteresis N] [--wav-invert] [--report]
 ```
 
 The input can also be a `.wav` recording, a `.tzx`, a `.p81` or a ZX80 `.o`/`.80` file. If a recording can't be read, `zx81dc` prints where it went wrong, e.g. `[00:03.400] the recording ends in the middle of the program (107 of 1893 program bytes read)`, and exits with code 1.
@@ -263,6 +309,10 @@ With no options it writes `program.txt`, plus `program.bas` if the BASIC could b
 | `--p file` | Also write a new `.p` file |
 | `--p-from listing\|basic` | Make that `.p` from the listing (default) or from the rebuilt BASIC |
 | `--extract file` | Write the program exactly as read from the input as a `.p` file (e.g. to turn a `.wav` into a `.p`) |
+| `--ctl file` | Use this control file (default: `program.ctl` next to the program, if there is one) |
+| `--wav-threshold N` | Reading a `.wav`: the noise threshold, in % of the loudest sound (default 20). Quieter than this counts as silence. Lower it for a recording that fades or has a loud click; raise it if hiss is read as pulses. |
+| `--wav-hysteresis N` | Reading a `.wav`: how far, in % of the signal, the level must swing to count (default 15). Raise it for ripples on the pulses, lower it for weak, rounded pulses. |
+| `--wav-invert` | Reading a `.wav`: turn the recording upside down first |
 | `--report` | Print the report (it includes the number mode the program was compiled with) |
 | `--?` | List the options with a line about each (also `-?`, `/?`, `-h`, `--help`) |
 
@@ -270,7 +320,7 @@ The decompiler needs no number-mode option: it reads the mode from the program's
 
 Limits:
 
-- Machine code is only found if something reaches it: a `USR` call the decompiler can evaluate, or a jump or call from code it has already found. Code started in other ways, such as by a `POKE` into the stack, is shown as data. The .P Toolkit's **Decode everything as Z80** switch shows it anyway.
+- Machine code is only found if something reaches it: a `USR` call the decompiler can evaluate, or a jump or call from code it has already found. Code started in other ways, such as by a `POKE` into the stack, is shown as data, unless a [control file](#control-files-ctl) marks it with `CODE`. The .P Toolkit's **Decode everything as Z80** switch shows it anyway.
 - Rebuilding BASIC only works for programs made by this compiler. Other machine code is given as assembly.
 
 ## The .P Toolkit
@@ -286,9 +336,12 @@ Open a `.p` file (Ctrl+O, or drag it onto the window), or a tape or other format
   - *Edit a hidden number:* with the hidden numbers shown, double-click a `{=value}` (or right-click it). Type a new value or the 5 bytes in hex; only the hidden number changes, not the digits in the listing, which is exactly the trick some programs use.
   - *Inject Binary into REM:* right-click a `REM` line and choose a `.bin` file. Everything after the `REM` is replaced by the file's bytes, and the lines after it, the display file and the variables move along, with `D_FILE`, `DF_CC`, `VARS`, `E_LINE`, `NXTLIN` and the other pointers worked out again. The status bar says where the code now starts (16514 for the first line). Injecting the same bytes back gives an identical file.
 - **Screen:** the display file drawn as the ZX81 would show it (32×24), at a choice of sizes. Collapsed 1K display files are handled. Save it as a picture or as text.
+  - *Draw on it:* tick **Draw**, choose a character in the strip of all 128 (or right-click the screen to pick one up from it), then click or drag on the screen. The characters are changed in place in the display file, so no system variable moves; **File → Save as .p** keeps them. This works on an expanded (16K style) display file; a collapsed one has lines of different lengths, so it is refused.
 - **Variables:** every variable saved with the program, decoded: numbers, strings, arrays and FOR loops (with their limit, step and loop line).
 - **Hex / Z80:** a hex editor and a Z80 disassembly side by side, kept in step. Traced machine code is shown in green. ROM routines and system variables are labelled, and the bytes after `RST 28h` and `RST 08h` are explained (calculator operations, error reports). Go to any address, edit bytes (double-click a row), then **Save .p as**.
 - **Graphics:** shows any part of memory as 8×8 tiles, to find and rip character sets and user-defined graphics as used by hi-res and custom-font programs. Likely character sets are found automatically. Save as `.png`, `.bin` or `.asm` (`DB` lines).
+  - *Edit a tile:* click a tile to load it into the 8×8 editor on the right, then click or drag over its pixels (the first click decides whether you are setting or clearing). **Clear**, **Invert**, **Mirror** and **Flip** help, **Revert** goes back, and **Apply** writes the 8 bytes back where they came from.
+  - *Add as new REM line:* puts the tiles shown (or just the one being edited), with your edit, into a new `REM` line, leaving the original bytes alone. The rest of the program, the display file and the variables move along, with `D_FILE`, `VARS`, `E_LINE` and the other system variables worked out again; the status bar says where the bytes now start.
 
 The **Export** menu has:
 
@@ -301,6 +354,8 @@ The **Export** menu has:
 - a `.p81` file (the program with its tape name);
 - a ZX80 program (`.o`), when the program only uses what a ZX80 has (see below);
 - **Play Audio to ZX81** (also on the toolbar): plays the tape sound through the computer's sound output, with a progress bar and a Stop button. Connect it to the ZX81's EAR socket, type `LOAD ""`, then press Play.
+
+**Options → Audio Import Options** changes how `.wav` recordings are read, for ones that don't read with the standard settings: the noise threshold (default 20% of the loudest sound), the hysteresis (default 15%) and inverting the recording. They apply to every `.wav` opened until the Toolkit is closed, and you can read the last `.wav` again straight away. `zx81dc` has the same settings as `--wav-threshold`, `--wav-hysteresis` and `--wav-invert`.
 
 **Run in Emulator** (Ctrl+F5, File menu and toolbar) starts the emulator set up in [Options → Configure Emulator](#emulator-set-up). An unchanged `.p` file is run from where it is; an edited program, or one opened from a tape, is run from a temporary copy.
 
@@ -319,6 +374,8 @@ Both the decompiler and the .P Toolkit open these as well as `.p` and `.81` file
 
 If a tape holds several programs, the first is opened and the others are listed.
 
+A `.wav` that won't read with the standard settings can often be read with others: see **Options → Audio Import Options** in the .P Toolkit, or `--wav-threshold`, `--wav-hysteresis` and `--wav-invert` in `zx81dc`. A loud click at the start of a quiet recording, for example, makes the real signal look like silence; a lower noise threshold (say 5%) reads it.
+
 Exporting to a ZX80 `.o` file works the other way, for programs that only use what a ZX80 has: no `PLOT`, `SIN` and other floating-point functions, no numbers with a decimal point, line numbers up to 9999. Every line that can't be converted is listed. Variables that a ZX80 can't hold are left out, with a note.
 
 
@@ -330,6 +387,10 @@ There are no dependencies and no NuGet packages. The code is C# 5, targeting .NE
 - **Linux/macOS:** install Mono and run `./build.sh`. The resulting `.exe` files run on Windows.
 
 Output goes to `build/`: all five executables.
+
+### Releases
+
+`.github/workflows/release.yml` builds a release on GitHub when a version tag is pushed (`git tag v1.01`, then `git push origin v1.01`). It runs `tests/run_tests.sh` on Linux (the tests that need the ZX81 ROM are skipped, because the ROM can't be put in the repository), builds the five programs on Windows with `build.bat`, and publishes `ZX81-Toolkit-win.zip` (the programs, `README.md`, `LICENSE` and `examples/`) as a GitHub Release.
 
 ## How it works
 
@@ -367,7 +428,11 @@ Output goes to `build/`: all five executables.
 - turns `.p` files into `.wav`, `.tzx` and `.p81` and back, byte for byte, in the C# test `tests/cs/TapeTest.cs` and again through `zx81dc --extract`. The `.wav` tests include 8-bit stereo, 24-bit and float recordings, inverted, quiet, noisy and fast ones;
 - damages recordings (a dropout, a burst of noise, a cut-off end, silence) and checks each is reported at the right `[mm:ss.ms]` time;
 - converts ZX81 programs to ZX80 `.o` files and back, and a hand-made ZX80 file to ZX81 BASIC;
-- injects binaries of other sizes into `REM` lines and checks the system variables, and that putting the original back gives an identical file; checks the hidden-number positions match the listing.
+- injects binaries of other sizes into `REM` lines and checks the system variables, and that putting the original back gives an identical file; checks the hidden-number positions match the listing;
+- reads quiet `.wav` recordings with a loud click, which fail with the standard settings, with a lower noise threshold (`AudioOptions`, `zx81dc --wav-threshold`);
+- labels (`tests/cs/LabelTest.cs`): a labelled listing compiles to exactly the same code as the numbered one; mixed numbering; every label error with its text line; renumbering (the renumbered program compiles to identical code; calculated GOTOs are warned about);
+- control files (`tests/cs/CtlTest.cs`): parsing every address form, `LABEL` and `COMMENT` in the `.asm`, `CODE` tracing and range decoding, `DATA` stopping tracing, and the `.asm` reassembling to the same bytes; then `zx81dc` with `program.ctl` and with `--ctl`;
+- the .P Toolkit's editors (`tests/cs/EditTest.cs`): drawn screen characters land at `D_FILE+1+row*33+col` with no system variable moving; a written-back tile changes only its 8 bytes; a new `REM` line of tiles moves `D_FILE`, `VARS`, `E_LINE`, `STKBOT` and `STKEND` by exactly its size, keeps `DF_CC`, the display file, the variables and the auto-run line, and errors are refused (collapsed display, keyword codes, an existing line number).
 
 ```sh
 pip install z80
@@ -384,9 +449,10 @@ The harness doesn't emulate the display hardware or real tape and printer signal
 ## Project layout
 
 ```
-src/Core/        shared code: compiler, .p file reader, listing, Z80 disassembler,
-                 machine code finder, BASIC recovery, tape writing and reading
-                 (.wav/.tzx/.p81), ZX80 conversion, emulator settings
+src/Core/        shared code: compiler, labels and renumbering, .p file reader, listing,
+                 Z80 disassembler, machine code finder, control files, BASIC recovery,
+                 tape writing and reading (.wav/.tzx/.p81), ZX80 conversion, emulator
+                 settings, .p edits made by the Toolkit
 src/Compiler/    compiler GUI and command line
 src/Decompiler/  decompiler GUI and command line
 src/Browser/     .P Toolkit
@@ -395,6 +461,7 @@ tests/           test listings, emulator harness, test drivers, expected results
 examples/        fortress.txt (small game), clock.txt (floating point), feature_test.txt
 build.sh         build with Mono
 build.bat        build on Windows
+.github/workflows/release.yml   builds, tests and publishes a release for a v* tag
 LICENSE          MIT licence
 ```
 

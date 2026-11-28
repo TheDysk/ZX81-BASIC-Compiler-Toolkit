@@ -33,6 +33,7 @@ namespace ZX81Compiler
         public string Asm;
         public string Report;
         public int EscapedLines;
+        public ControlFile Control;  // the control file used (null if none)
 
         /// <summary>Make a .p file from listing text. Lines starting with # are notes and are skipped.
         /// The original display file, variables and auto-run setting are kept.</summary>
@@ -49,10 +50,11 @@ namespace ZX81Compiler
 
     public static class Decompiler
     {
-        public static DecompileResult Run(PFile p, string name)
+        /// <summary>Decompile a program. ctl: a control file (LABEL, COMMENT, CODE, DATA) or null.</summary>
+        public static DecompileResult Run(PFile p, string name, ControlFile ctl = null)
         {
-            var r = new DecompileResult { File = p, Name = name };
-            r.Code = CodeFinder.Analyze(p);
+            var r = new DecompileResult { File = p, Name = name, Control = ctl };
+            r.Code = CodeFinder.Analyze(p, ctl);
             r.Recovered = Recover.Run(p, r.Code);
             if (r.Recovered.Success) r.Basic = Header(p, name, "BASIC rebuilt from the machine code made by the ZX81 BASIC compiler", r) + r.Recovered.Listing;
 
@@ -60,7 +62,7 @@ namespace ZX81Compiler
             string body = Basic81.ProgramText(p, new DetokOptions { Style = ListStyle.Exact }, out esc);
             r.EscapedLines = esc;
             r.Listing = Header(p, name, "BASIC listing exactly as stored", r) + VariablesComment(p) + body;
-            r.Asm = r.Code.Blocks.Count > 0 ? CodeFinder.ToAsm(p, r.Code, name) : null;
+            r.Asm = r.Code.Blocks.Count > 0 ? CodeFinder.ToAsm(p, r.Code, name, ctl) : null;
             r.Report = MakeReport(p, name, r);
             return r;
         }
@@ -135,6 +137,7 @@ namespace ZX81Compiler
             foreach (var hn in p.HardwareNotes(r.Code.Entries.Select(e => e.Address))) sb.AppendLine("Warning: " + hn);
             sb.AppendLine();
             sb.AppendLine("MACHINE CODE");
+            if (r.Control != null) sb.AppendLine("  Control file: " + r.Control.Summary());
             if (!r.Code.HasMachineCode) sb.AppendLine("  none found");
             foreach (var e in r.Code.Entries) sb.AppendLine("  Entry " + e.Address + " (" + Z80Disasm.Hex(e.Address, 4) + "): " + e.Source);
             foreach (var n in r.Code.Notes) sb.AppendLine("  " + n);

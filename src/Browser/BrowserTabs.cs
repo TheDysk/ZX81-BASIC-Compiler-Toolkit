@@ -288,6 +288,7 @@ namespace ZX81Compiler
             picScreen = new PictureBox { SizeMode = PictureBoxSizeMode.AutoSize, Location = new Point(10, 10) };
             scroll.Controls.Add(picScreen);
             page.Controls.Add(scroll);
+            BuildScreenEditor(row, page);        // Draw tick box, character strip (BrowserEditors.cs)
             page.Controls.Add(row);
             tabs.TabPages.Add(page);
         }
@@ -687,8 +688,9 @@ namespace ZX81Compiler
             picTiles = new PictureBox { SizeMode = PictureBoxSizeMode.AutoSize, Location = new Point(6, 6) };
             scroll.Controls.Add(picTiles);
             var help = new Label { Dock = DockStyle.Bottom, Height = 36, ForeColor = Color.DimGray, Padding = new Padding(4, 2, 0, 0),
-                Text = "Each 8 bytes are drawn as one 8x8 tile (one byte per row, bit 7 on the left) - the format hi-res (HRG) programs use for their characters and UDGs. Use -1/+1 byte to line the tiles up." };
+                Text = "Each 8 bytes are drawn as one 8x8 tile (one byte per row, bit 7 on the left) - the format hi-res (HRG) programs use for their characters and UDGs. Use -1/+1 byte to line the tiles up. Click a tile to edit it on the right." };
             page.Controls.Add(scroll);
+            BuildTileEditor(page);               // the 8x8 editor on the right (BrowserEditors.cs)
             page.Controls.Add(lbFound);
             page.Controls.Add(help);
             page.Controls.Add(row);
@@ -697,6 +699,9 @@ namespace ZX81Compiler
 
         void FillGraphicsDefaults()
         {
+            if (keepGraphicsView) { FillTiles(); return; }    // after an edit: stay where we were
+            tileAddr = -1;
+            DrawTileEditor();
             int a = ca.Blocks.Count > 0 ? ca.Blocks[0][0] : PFile.ProgStart;
             txtTileAddr.Text = a.ToString("X4");
             FillTiles();

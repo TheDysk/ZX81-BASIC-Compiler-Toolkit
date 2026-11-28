@@ -39,6 +39,39 @@ namespace ZX81Compiler
             if (EmulatorUi.Run(this, file)) status.Text = "Started the emulator with " + file + (asIs ? "" : " (a temporary copy of the program as shown)");
         }
 
+        // ---------------- Options > Audio Import Options ----------------
+        readonly AudioOptions audio = new AudioOptions();   // used when a .wav is opened
+        string lastWav;                                     // the last .wav opened (or tried)
+
+        void AudioImportOptions()
+        {
+            using (var f = new Form { Text = "Audio Import Options", Width = 470, Height = 300, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false })
+            {
+                var intro = new Label { Left = 12, Top = 10, Width = 430, Height = 34, Text = "For .wav recordings that don't read with the standard settings. They are used for every .wav opened until the program is closed." };
+                var l1 = new Label { Text = "Noise threshold (% of the loudest sound):", Left = 12, Top = 54, AutoSize = true };
+                var thr = new NumericUpDown { Left = 360, Top = 50, Width = 70, Minimum = 1, Maximum = 90, Value = (decimal)Math.Round(audio.Threshold * 100) };
+                var h1 = new Label { Left = 24, Top = 76, Width = 420, Height = 30, ForeColor = Color.DimGray, Text = "Quieter than this counts as silence. Lower it if the recording fades or has a loud click; raise it if hiss is read as pulses. Standard: 20." };
+                var l2 = new Label { Text = "Hysteresis (% of the signal):", Left = 12, Top = 112, AutoSize = true };
+                var hys = new NumericUpDown { Left = 360, Top = 108, Width = 70, Minimum = 1, Maximum = 45, Value = (decimal)Math.Round(audio.Hysteresis * 100) };
+                var h2 = new Label { Left = 24, Top = 134, Width = 420, Height = 30, ForeColor = Color.DimGray, Text = "How far the level must swing to count. Raise it for ripples on the pulses; lower it for weak, rounded pulses. Standard: 15." };
+                var inv = new CheckBox { Text = "Invert the recording (turn it upside down first)", Left = 12, Top = 170, AutoSize = true, Checked = audio.Invert };
+                var reset = new Button { Text = "Standard settings", Left = 12, Top = 222, Width = 130 };
+                var ok = new Button { Text = "OK", Left = 270, Top = 222, Width = 80, DialogResult = DialogResult.OK };
+                var cancel = new Button { Text = "Cancel", Left = 358, Top = 222, Width = 80, DialogResult = DialogResult.Cancel };
+                reset.Click += (s, e) => { thr.Value = (decimal)(AudioOptions.DefaultThreshold * 100); hys.Value = (decimal)(AudioOptions.DefaultHysteresis * 100); inv.Checked = false; };
+                f.Controls.AddRange(new Control[] { intro, l1, thr, h1, l2, hys, h2, inv, reset, ok, cancel });
+                f.AcceptButton = ok; f.CancelButton = cancel;
+                if (f.ShowDialog(this) != DialogResult.OK) return;
+                audio.Threshold = (double)thr.Value / 100;
+                audio.Hysteresis = (double)hys.Value / 100;
+                audio.Invert = inv.Checked;
+            }
+            status.Text = "Audio import: " + (audio.IsDefault ? "standard settings" : audio.ToString()) + ".";
+            if (lastWav != null && File.Exists(lastWav) &&
+                MessageBox.Show(this, "Read " + Path.GetFileName(lastWav) + " again with these settings?", "Audio Import Options", MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes)
+                OpenFile(lastWav);
+        }
+
         // ---------------- other exports ----------------
         void ExportP81()
         {

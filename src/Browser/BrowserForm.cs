@@ -36,8 +36,8 @@ using System.Reflection;
 [assembly: AssemblyDescription("Inspects, edits and exports ZX81 .p files")]
 [assembly: AssemblyProduct("ZX81 BASIC Toolset")]
 [assembly: AssemblyCopyright("Copyright (c) Simon Round 2026")]
-[assembly: AssemblyVersion("1.00.0.0")]
-[assembly: AssemblyFileVersion("1.00.0.0")]
+[assembly: AssemblyVersion("0.9.0.0")]
+[assembly: AssemblyFileVersion("0.9.0.0")]
 
 namespace ZX81Compiler
 {
@@ -100,6 +100,7 @@ namespace ZX81Compiler
             export.DropDownItems.Add(new ToolStripMenuItem("&Play Audio to ZX81...", null, (s, e) => PlayAudio()));
             var options = new ToolStripMenuItem("&Options");
             options.DropDownItems.Add(new ToolStripMenuItem("Configure &Emulator...", null, (s, e) => EmulatorUi.Configure(this)));
+            options.DropDownItems.Add(new ToolStripMenuItem("&Audio Import Options...", null, (s, e) => AudioImportOptions()));
             var help = new ToolStripMenuItem("&Help");
             help.DropDownItems.Add(new ToolStripMenuItem("&How it works...", null, (s, e) => UiCommon.ShowHelp(this, ".P Toolkit - how it works", HelpText), Keys.F1));
             help.DropDownItems.Add(new ToolStripMenuItem("&About", null, (s, e) => MessageBox.Show(this,
@@ -146,7 +147,9 @@ namespace ZX81Compiler
         public void OpenFile(string file)
         {
             if (edited && MessageBox.Show(this, "You have edited bytes that aren't saved. Open another file anyway?", ".P Toolkit", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
-            var lp = UiCommon.OpenProgram(this, file);    // shows the error ([mm:ss.ms] for audio) itself
+            if (Path.GetExtension(file).ToLowerInvariant() == ".wav") lastWav = file;
+            var lp = UiCommon.OpenProgram(this, file, audio,    // shows the error ([mm:ss.ms] for audio) itself
+                "If the recording is noisy, quiet, fades or has clicks, try other settings in Options > Audio Import Options.");
             if (lp == null) return;
             try
             {
@@ -283,14 +286,21 @@ If a recording can't be read, a message gives the time in it, as [minutes:second
 # The tabs
 Overview :: The auto-run status (whether the program starts by itself after LOAD, and at which line), the system variables 4009h-407Ch with their values in plain English, and a memory map. RAMTOP isn't saved in a .p file, so choose the machine (1K to 16K, or a 32K or 64K RAM pack) the map is drawn for. Warnings show anything a real ZX81 can't do with the file. For a program made by the ZX81 BASIC Compiler it also says where its variables go while it runs and how it works out numbers: full floating point (5-byte numbers, as the ZX81) or float islands (2-byte whole numbers).
 BASIC listing :: The program with ZX81 characters: keywords, inverse video and block graphics. Machine code in REM lines can be shown as Z80 instructions.
-Screen :: The saved display file, drawn as the ZX81 shows it, at a choice of sizes.
+Screen :: The saved display file, drawn as the ZX81 shows it, at a choice of sizes. Tick Draw to draw on it (see below).
 Variables :: Every variable saved with the program: numbers, strings, arrays and FOR loops.
 Hex / Z80 :: A hex dump and a Z80 disassembly side by side, kept in step. Traced machine code is green; ROM routines and system variables are named. Double-click a row to edit bytes.
-Graphics :: Any part of memory as 8x8 tiles, to find and save character sets and user-defined graphics.
+Graphics :: Any part of memory as 8x8 tiles, to find and save character sets and user-defined graphics. Click a tile to edit it (see below).
 
 # Hidden numbers
 Every number in a ZX81 BASIC line is followed by a hidden 5-byte copy that the ZX81 actually uses. Tick Show the hidden 5-byte numbers to see them as {=value}; a ! marks one that differs from the digits shown, a trick some programs use.
 To change one, double-click its {=value} (or right-click it and choose Edit hidden number). Type a new value, or the 5 bytes in hex. Only the hidden number changes, not the digits in the listing.
+
+# Drawing on the screen
+On the Screen tab, tick Draw, choose a character in the strip of all 128 characters (or right-click the screen to pick one up from it), then click or drag on the screen. The characters are changed in place, so nothing else in the file moves. Only an expanded (16K style) display file can be drawn on: a collapsed one has lines of different lengths. File > Save as .p keeps the drawing.
+
+# Editing tiles (character sets and UDGs)
+On the Graphics tab, click a tile to load it into the 8x8 editor on the right. Click or drag over its pixels: the first pixel you click decides whether you are setting or clearing. Clear, Invert, Mirror and Flip change the whole tile, Revert goes back to what is in memory, and Apply writes the 8 bytes back where they came from.
+Add as new REM line... puts the tiles shown (or just the one being edited), including your edit, into a new REM line, leaving the original bytes alone. The lines after it, the display file and the variables move along, with D_FILE, VARS, E_LINE and the other system variables worked out again; the status bar says where the bytes now start.
 
 # Inject Binary into REM
 Right-click a REM line in the listing and choose Inject Binary into REM, then a .bin file. Everything after the REM is replaced by the file's bytes. The lines after it, the display file and the variables move along, and the system variables that point at them (D_FILE, DF_CC, VARS, E_LINE, NXTLIN ...) are worked out again. The status bar says where the code now starts: 16514 for the first line of the program, which is where RAND USR 16514 goes.
@@ -299,6 +309,13 @@ If the REM is not the last line, machine code elsewhere that uses fixed addresse
 # Saving and exporting
 File > Save as .p keeps your changes (edited bytes, hidden numbers or REM code), or saves a tape or ZX80 program as a .p file.
 The Export menu writes the BASIC listing as text (in the same format as the decompiler's listing, so it turns back into an identical .p), a hex dump, a Z80 disassembly, the screen as a picture or text, cassette audio (.wav), a .tzx tape image, a .p81 file, and a ZX80 program (.o). The ZX80 export only works for programs that use what a ZX80 has: no PLOT, no SIN and other floating point, no numbers with a decimal point, and line numbers up to 9999. Every line that can't be converted is listed.
+
+# Audio Import Options
+Options > Audio Import Options changes how .wav recordings are read, for ones that don't read with the standard settings:
+Noise threshold :: Quieter than this part of the loudest sound counts as silence (standard 20%). Lower it for a recording that fades, or a quiet one with a loud click; raise it if hiss is read as pulses.
+Hysteresis :: How far the level must swing to count (standard 15%). Raise it for ripples on the pulses; lower it for weak, rounded pulses.
+Invert :: Turn the recording upside down before reading it.
+The settings are used for every .wav opened until the Toolkit is closed, and you can read the last .wav again with them straight away. zx81dc has the same settings: --wav-threshold, --wav-hysteresis, --wav-invert.
 
 # Play Audio to ZX81
 Plays the program as tape sound through the computer's sound output. Connect it to the ZX81's EAR socket, type LOAD """" on the ZX81 and press NEWLINE, then click Play. The progress bar shows how far it has got, and Stop ends it. Turn the volume well up; if the ZX81 doesn't load the program, try a little louder or quieter.

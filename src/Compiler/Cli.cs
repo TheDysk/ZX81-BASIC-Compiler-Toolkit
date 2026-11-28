@@ -22,8 +22,8 @@ using System.Reflection;
 [assembly: AssemblyDescription("Compiles ZX81 BASIC listings to Z80 machine code .p files")]
 [assembly: AssemblyProduct("ZX81 BASIC Toolset")]
 [assembly: AssemblyCopyright("Copyright (c) Simon Round 2026")]
-[assembly: AssemblyVersion("1.00.0.0")]
-[assembly: AssemblyFileVersion("1.00.0.0")]
+[assembly: AssemblyVersion("0.9.0.0")]
+[assembly: AssemblyFileVersion("0.9.0.0")]
 
 namespace ZX81Compiler
 {
@@ -49,6 +49,11 @@ Numbers (also chosen by a #FULL_FLOAT, #FLOAT_ISLANDS or #STRICT_INT line in the
                    with SIN, PI, 0.5, VAL ... use floating point, rounded when stored
   --float int      integer only: floating point is a compile error
   --strict-int     the same as --float int
+
+Labels (also switched on by a #LABELS line, or any @name: in the listing):
+  --labels         lines may leave out their numbers (numbered 10, 20 ... around any
+                   explicit ones), and @name: labels a line for GOTO @name, GO SUB
+                   @name, IF ... THEN @name, RUN @name ...
 
 Other options:
   --ram 16|32|64   RAM the program is for: 16K (default), or a 32K or 64K RAM pack
@@ -99,6 +104,7 @@ read, 3 compiled but the emulator couldn't be started.
                             break;
                         }
                     case "--strict-int": opt.Numbers = NumberMode.IntegerOnly; break;   // the same as --float int
+                    case "--labels": opt.Labels = true; break;                  // like #LABELS in the listing
                     case "--run": run = true; break;                           // start the emulator afterwards
                     case "--emulator": emulator = args[++i]; run = true; break; // ... this one (not saved)
                     case "--version":

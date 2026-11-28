@@ -19,6 +19,9 @@
 //      way are certainly code; everything else in a REM line is data.
 //   3. REM lines whose contents can't be text (codes 43h-7Fh) are reported as machine
 //      code / data even if no USR points at them.
+//   A control file (ControlFile.cs) can add more: CODE starts more tracing (and, with an
+//   end address, decodes a whole range); DATA ranges are never treated as code; LABEL
+//   and COMMENT change the .asm listing.
 // =====================================================================================
 using System;
 using System.Collections.Generic;
@@ -53,7 +56,7 @@ namespace ZX81Compiler
 
     public static class CodeFinder
     {
-        public static CodeAnalysis Analyze(PFile p)
+        public static CodeAnalysis Analyze(PFile p, ControlFile ctl = null)
         {
             var ca = new CodeAnalysis();
             var vars = p.ReadVariables();
@@ -85,13 +88,32 @@ namespace ZX81Compiler
                 }
             }
 
-            // ---- 2. trace from each entry ----
+            // ---- 2. trace from each entry (and from each CODE start in the control file) ----
+            if (ctl != null)
+                foreach (var r in ctl.Code)
+                {
+                    bool inFile = r[0] >= PFile.Base && r[0] < p.FileEnd;
+                    if (!inFile) { ca.Notes.Add("Control file: CODE " + Z80Disasm.Hex(r[0], 4) + " is outside the file, so it can't be disassembled."); continue; }
+                    ca.Entries.Add(new CodeEntry { Address = r[0], Source = "CODE in the control file", InFile = true });
+                }
             foreach (var e in ca.Entries)
             {
                 if (e.Address < 0x2000) { ca.Notes.Add(e.Source + " calls ROM address " + Z80Disasm.Hex(e.Address, 4) + (Z80Disasm.KnownLabel(e.Address) != null ? " (" + Z80Disasm.KnownLabel(e.Address) + ")" : "") + "."); continue; }
                 if (!e.InFile) { ca.Notes.Add(e.Source + " calls " + e.Address + " (" + Z80Disasm.Hex(e.Address, 4) + "), which is outside the file - that machine code must be loaded or POKEd separately (often above RAMTOP)."); continue; }
                 ca.Labels.Add(e.Address);
-                Trace(p, ca, e.Address);
+                Trace(p, ca, e.Address, ctl);
+            }
+            if (ctl != null)
+            {
+                // CODE start end: decode the whole range, one instruction after another
+                foreach (var r in ctl.Code)
+                    if (r[1] > r[0] && r[0] >= PFile.Base && r[0] < p.FileEnd) Linear(p, ca, r[0], Math.Min(r[1], p.FileEnd), ctl);
+                // DATA: never code, whatever the tracing found
+                foreach (var d in ctl.Data)
+                    for (int a = Math.Max(d[0], PFile.Base); a < d[1] && a < p.FileEnd; a++)
+                    {
+                        ca.IsCode[a] = false; ca.CalcBytes[a] = false; ca.InstrStarts.Remove(a);
+                    }
             }
 
             // ---- 3. REM lines with machine code or data ----
@@ -109,6 +131,14 @@ namespace ZX81Compiler
                 int en = Math.Min(l.End - 1, p.FileEnd);       // without the final 76h
                 if (en > s) ca.Blocks.Add(new[] { s, en });
             }
+            // ranges from the control file are blocks of their own
+            if (ctl != null)
+                foreach (var r in ctl.Code.Where(x => x[1] > x[0]).Concat(ctl.Data))
+                {
+                    int s0 = Math.Max(r[0], PFile.Base), e0 = Math.Min(r[1], p.FileEnd);
+                    if (e0 > s0 && !Enumerable.Range(s0, e0 - s0).All(a => InBlocks(ca, a))) ca.Blocks.Add(new[] { s0, e0 });
+                }
+            MergeBlocks(ca);
             int run = -1;
             for (int a = PFile.Base; a <= p.FileEnd; a++)
             {
@@ -116,7 +146,7 @@ namespace ZX81Compiler
                 if (code && run < 0) run = a;
                 if (!code && run >= 0) { ca.Blocks.Add(new[] { run, a }); run = -1; }
             }
-            ca.Blocks.Sort((x, y) => x[0].CompareTo(y[0]));
+            MergeBlocks(ca);
 
             // ---- describe where the code is ----
             foreach (var blk in ca.Blocks)
@@ -137,6 +167,35 @@ namespace ZX81Compiler
             return ca;
         }
 
+        /// <summary>Sort the blocks and join any that overlap.</summary>
+        static void MergeBlocks(CodeAnalysis ca)
+        {
+            ca.Blocks.Sort((x, y) => x[0].CompareTo(y[0]));
+            for (int i = 1; i < ca.Blocks.Count; i++)
+                if (ca.Blocks[i][0] < ca.Blocks[i - 1][1])
+                {
+                    ca.Blocks[i - 1][1] = Math.Max(ca.Blocks[i - 1][1], ca.Blocks[i][1]);
+                    ca.Blocks.RemoveAt(i--);
+                }
+        }
+
+        /// <summary>Decode [start, end) one instruction after another (control file CODE start end).</summary>
+        static void Linear(PFile p, CodeAnalysis ca, int start, int end, ControlFile ctl)
+        {
+            int a = start;
+            while (a < end)
+            {
+                if (ctl.IsData(a)) { a++; continue; }
+                var ins = Z80Disasm.Decode(p.Mem, a, null);
+                if (ins.Invalid || a + ins.Len > end) break;
+                if (!ca.InstrStarts.Contains(a) && Enumerable.Range(a, ins.Len).Any(k => ca.IsCode[k])) { a++; continue; }   // inside an instruction already traced
+                ca.InstrStarts.Add(a);
+                for (int k = 0; k < ins.Len; k++) ca.IsCode[(a + k) & 0xFFFF] = true;
+                if (ins.Target >= PFile.Base && ins.Target < p.FileEnd) ca.Labels.Add(ins.Target);
+                a += ins.Len;
+            }
+        }
+
         static bool InBlocks(CodeAnalysis ca, int a)
         {
             foreach (var b in ca.Blocks) if (a >= b[0] && a < b[1]) return true;
@@ -144,7 +203,7 @@ namespace ZX81Compiler
         }
 
         /// <summary>Follow the code from start: decode, mark, follow jumps and calls.</summary>
-        static void Trace(PFile p, CodeAnalysis ca, int start)
+        static void Trace(PFile p, CodeAnalysis ca, int start, ControlFile ctl)
         {
             var work = new Stack<int>();
             work.Push(start);
@@ -154,6 +213,7 @@ namespace ZX81Compiler
                 int a = work.Pop();
                 while (a >= PFile.Base && a < p.FileEnd && !ca.InstrStarts.Contains(a))
                 {
+                    if (ctl != null && ctl.IsData(a)) break;     // the control file says this is data
                     var ins = Z80Disasm.Decode(p.Mem, a, null);
                     if (ins.Invalid) break;
                     ca.InstrStarts.Add(a);
@@ -275,16 +335,32 @@ namespace ZX81Compiler
             }
         }
 
+        /// <summary>Control-file comments for the addresses [from, to): a comment line each,
+        /// above the instruction or DB line that holds them.</summary>
+        static void CommentsFor(StringBuilder body, ControlFile ctl, int from, int to)
+        {
+            if (ctl == null) return;
+            for (int a = from; a < to; a++)
+            {
+                List<string> c;
+                if (ctl.Comments.TryGetValue(a, out c)) foreach (var t in c) body.AppendLine("        ; " + t);
+            }
+        }
+
         // ------------------------------------------------------------------
         //  .asm export
         // ------------------------------------------------------------------
         /// <summary>The machine code and data as an assembly listing that assemblers such as
         /// pasmo or z80asm can assemble back to the same bytes (ORG + DB/instructions).</summary>
-        public static string ToAsm(PFile p, CodeAnalysis ca, string sourceName)
+        public static string ToAsm(PFile p, CodeAnalysis ca, string sourceName, ControlFile ctl = null)
         {
             var used = new SortedDictionary<int, string>();
+            Func<int, bool> inBlock = x => ca.Blocks.Any(b => x >= b[0] && x < b[1]);
             Func<int, string> label = a =>
             {
+                string cl;
+                if (ctl != null && ctl.Labels.TryGetValue(a, out cl)) { if (!inBlock(a)) used[a] = cl; return cl; }   // the control file's name
+                if (ctl != null && ctl.Labels.TryGetValue(a - 1, out cl) && !ca.Labels.Contains(a)) { if (!inBlock(a - 1)) used[a - 1] = cl; return cl + "+1"; }
                 if (ca.Labels.Contains(a)) return "L" + a.ToString("X4");
                 string k = Z80Disasm.KnownLabel(a);
                 if (k != null && !k.EndsWith("+1")) { used[a] = k; return k; }
@@ -300,12 +376,16 @@ namespace ZX81Compiler
                 int a = blk[0];
                 while (a < blk[1])
                 {
-                    if (ca.Labels.Contains(a)) body.AppendLine("L" + a.ToString("X4") + ":");
+                    string own = null;
+                    if (ctl != null) ctl.Labels.TryGetValue(a, out own);
+                    if (own != null) body.AppendLine(own + ":");
+                    else if (ca.Labels.Contains(a)) body.AppendLine("L" + a.ToString("X4") + ":");
                     if (ca.InstrStarts.Contains(a))
                     {
                         var ins = Z80Disasm.Decode(p.Mem, a, label);
                         if (a + ins.Len <= blk[1])
                         {
+                            CommentsFor(body, ctl, a, a + ins.Len);
                             body.Append("        ").Append(ins.Text.PadRight(24)).Append("; ").Append(a.ToString("X4")).Append("  ");
                             for (int k = 0; k < ins.Len; k++) body.Append(p.Mem[a + k].ToString("X2")).Append(' ');
                             body.AppendLine();
@@ -317,7 +397,9 @@ namespace ZX81Compiler
                     var db = new List<string>();
                     int st = a;
                     do { db.Add(Z80Disasm.Hex(p.Mem[a], 2)); a++; }
-                    while (a < blk[1] && db.Count < 8 && !ca.InstrStarts.Contains(a) && !ca.Labels.Contains(a));
+                    while (a < blk[1] && db.Count < 8 && !ca.InstrStarts.Contains(a) && !ca.Labels.Contains(a) &&
+                           (ctl == null || (!ctl.Labels.ContainsKey(a) && !ctl.Comments.ContainsKey(a))));
+                    CommentsFor(body, ctl, st, a);
                     body.Append("        DB ").Append(string.Join(",", db).PadRight(22)).Append("; ").Append(st.ToString("X4"));
                     if (ca.CalcBytes[st]) body.Append("  " + Z80Disasm.CalcComment(p.Mem, st, a - st));
                     body.AppendLine();
@@ -329,6 +411,12 @@ namespace ZX81Compiler
             sb.AppendLine(";");
             foreach (var e in ca.Entries) sb.AppendLine("; Entry: " + Z80Disasm.Hex(e.Address, 4) + " (" + e.Address + ") - " + e.Source);
             foreach (var n in ca.Notes) sb.AppendLine("; " + n);
+            if (ctl != null)
+            {
+                sb.AppendLine("; Control file: " + ctl.Summary());
+                foreach (var kv in ctl.Comments.Where(kv => !inBlock(kv.Key)))
+                    foreach (var t in kv.Value) sb.AppendLine("; " + Z80Disasm.Hex(kv.Key, 4) + ": " + t);
+            }
             sb.AppendLine();
             foreach (var kv in used) sb.AppendLine((kv.Value + "").PadRight(12) + "EQU " + Z80Disasm.Hex(kv.Key, 4));
             sb.Append(body);

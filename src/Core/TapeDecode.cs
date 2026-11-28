@@ -48,6 +48,39 @@ namespace ZX81Compiler
         public double StartSeconds = -1, EndSeconds = -1;   // where it is in a recording (audio only)
     }
 
+    /// <summary>Settings for reading .wav recordings of tapes, for recordings that don't
+    /// decode with the defaults (zx81dc --wav-threshold / --wav-hysteresis / --wav-invert,
+    /// the .P Toolkit's Options > Audio Import Options).</summary>
+    public class AudioOptions
+    {
+        /// <summary>Noise threshold: where the signal (over the last millisecond) is quieter
+        /// than this part of the loudest signal in the recording, it counts as silence.
+        /// Lower it for recordings that get quieter; raise it for noisy ones. Default 0.20.</summary>
+        public double Threshold = DefaultThreshold;
+        /// <summary>Hysteresis: how far past the middle of the local signal a level must go to
+        /// count as high or low, as a part of the local signal's size. Raise it to ignore
+        /// ripples and hiss on the pulses; lower it for weak, rounded pulses. Default 0.15.</summary>
+        public double Hysteresis = DefaultHysteresis;
+        /// <summary>Turn the recording upside down first (pulses are then found on the other edge).</summary>
+        public bool Invert;
+
+        public const double DefaultThreshold = 0.20, DefaultHysteresis = 0.15;
+        public bool IsDefault { get { return Threshold == DefaultThreshold && Hysteresis == DefaultHysteresis && !Invert; } }
+
+        /// <summary>Check the settings; null if fine, else what is wrong.</summary>
+        public string Problem()
+        {
+            if (Threshold < 0.01 || Threshold > 0.9) return "the noise threshold must be between 1% and 90%";
+            if (Hysteresis < 0.01 || Hysteresis > 0.45) return "the hysteresis must be between 1% and 45%";
+            return null;
+        }
+
+        public override string ToString()
+        {
+            return "noise threshold " + Math.Round(Threshold * 100) + "%, hysteresis " + Math.Round(Hysteresis * 100) + "%" + (Invert ? ", inverted" : "");
+        }
+    }
+
     public static class TapeDecode
     {
         // ------------------------------------------------------------------
@@ -116,11 +149,11 @@ namespace ZX81Compiler
         /// <summary>Decode cassette audio. Returns every ZX81 program found, in order
         /// (normally one). Throws a TapeDecodeException with the time of the problem if
         /// the recording can't be read.</summary>
-        public static List<TapeProgram> ReadWav(byte[] wav)
+        public static List<TapeProgram> ReadWav(byte[] wav, AudioOptions opts = null)
         {
             int rate;
             float[] s = WavSamples(wav, out rate);
-            return DecodeSamples(s, rate, 0);
+            return DecodeSamples(s, rate, 0, opts);
         }
 
         /// <summary>The audio in a .wav file as mono samples (channels averaged).</summary>
@@ -181,9 +214,13 @@ namespace ZX81Compiler
 
         /// <summary>Find ZX81 programs in mono audio samples. offset = time of sample 0
         /// (seconds), so errors give the time in the whole recording.</summary>
-        public static List<TapeProgram> DecodeSamples(float[] s, int rate, double offset)
+        public static List<TapeProgram> DecodeSamples(float[] s, int rate, double offset, AudioOptions opts = null)
         {
-            var edges = PulseEdges(s, rate);
+            opts = opts ?? new AudioOptions();
+            string bad = opts.Problem();
+            if (bad != null) throw new TapeDecodeException("audio import options: " + bad, -1);
+            if (opts.Invert) { var inv = new float[s.Length]; for (int i = 0; i < s.Length; i++) inv[i] = -s[i]; s = inv; }
+            var edges = PulseEdges(s, rate, opts);
             // group the pulses into bits: (time of first pulse, number of pulses)
             var bitT = new List<double>();
             var bitN = new List<int>();
@@ -289,14 +326,14 @@ namespace ZX81Compiler
         /// <summary>Sample numbers where a pulse starts. The level is judged against the
         /// highest and lowest values of the last millisecond, so DC offset, either polarity,
         /// pulses that only go one way, and volume changes are all fine. Quiet stretches
-        /// (less than a fifth of the loudest signal) count as silence.</summary>
-        static List<int> PulseEdges(float[] s, int rate)
+        /// (less than a fifth of the loudest signal, or AudioOptions.Threshold) count as silence.</summary>
+        static List<int> PulseEdges(float[] s, int rate, AudioOptions opts)
         {
             var edges = new List<int>();
             if (s.Length == 0) return edges;
             float gmax = float.MinValue, gmin = float.MaxValue;
             foreach (float v in s) { if (v > gmax) gmax = v; if (v < gmin) gmin = v; }
-            double quiet = 0.2 * (gmax - gmin);
+            double quiet = opts.Threshold * (gmax - gmin);
             if (gmax - gmin < 1e-4) return edges;
             int w = Math.Max(2, (int)(Window * rate));
             // sliding maximum and minimum over the last w samples, with monotonic queues
@@ -315,7 +352,7 @@ namespace ZX81Compiler
                 while (qmin[hmin] <= i - w) { hmin = (hmin + 1) % cap; nmin--; }
                 double hi = s[qmax[hmax]], lo = s[qmin[hmin]], amp = hi - lo;
                 if (amp < quiet) { state = 0; continue; }
-                double mid = (hi + lo) / 2, hyst = 0.15 * amp;
+                double mid = (hi + lo) / 2, hyst = opts.Hysteresis * amp;
                 // a pulse starts where the level rises to high, from low or from silence
                 if (s[i] > mid + hyst) { if (state != 1) edges.Add(i); state = 1; }
                 else if (s[i] < mid - hyst) state = -1;

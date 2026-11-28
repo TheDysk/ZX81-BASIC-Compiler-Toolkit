@@ -27,8 +27,8 @@ using System.Reflection;
 [assembly: AssemblyDescription("Turns ZX81 .p files back into BASIC listings and Z80 assembly")]
 [assembly: AssemblyProduct("ZX81 BASIC Toolset")]
 [assembly: AssemblyCopyright("Copyright (c) Simon Round 2026")]
-[assembly: AssemblyVersion("1.00.0.0")]
-[assembly: AssemblyFileVersion("1.00.0.0")]
+[assembly: AssemblyVersion("0.9.0.0")]
+[assembly: AssemblyFileVersion("0.9.0.0")]
 
 namespace ZX81Compiler
 {
@@ -45,7 +45,7 @@ namespace ZX81Compiler
         }
     }
 
-    public class DecompilerForm : Form
+    public partial class DecompilerForm : Form
     {
         readonly TabControl tabs;
         readonly TextBox listing, basic, asm, report;
@@ -69,7 +69,7 @@ namespace ZX81Compiler
             file.DropDownItems.Add(new ToolStripMenuItem("Save rebuilt &BASIC (.bas)...", null, (s, e) => SaveBasic()));
             file.DropDownItems.Add(new ToolStripMenuItem("Save &machine code (.asm)...", null, (s, e) => SaveAsm()));
             file.DropDownItems.Add(new ToolStripMenuItem("Make .&p file from this tab...", null, (s, e) => MakeP(), Keys.Control | Keys.P));
-            file.DropDownItems.Add(new ToolStripSeparator());
+            file.DropDownItems.Add(new ToolStripSeparator { Name = "exitSeparator" });
             file.DropDownItems.Add(new ToolStripMenuItem("E&xit", null, (s, e) => Close()));
             var help = new ToolStripMenuItem("&Help");
             help.DropDownItems.Add(new ToolStripMenuItem("&How it works...", null, (s, e) => UiCommon.ShowHelp(this, "ZX81 Decompiler - how it works", HelpText), Keys.F1));
@@ -112,6 +112,7 @@ namespace ZX81Compiler
             Controls.Add(menu);
             Controls.Add(strip);
             MainMenuStrip = menu;
+            AddControlFileMenu(file);      // File > Load / Save Control File, right-click in the Machine code tab
             UiCommon.AcceptDrops(this, OpenFile);
         }
 
@@ -128,11 +129,13 @@ namespace ZX81Compiler
             var lp = UiCommon.OpenProgram(this, file);   // shows the error itself ([mm:ss.ms] for a recording)
             Cursor = Cursors.Default;
             if (lp == null) return;
+            if (!AskSaveControlFile()) return;
             try
             {
                 Cursor = Cursors.WaitCursor;
                 var p = PFile.Load(lp.P);
-                result = Decompiler.Run(p, Path.GetFileName(file));
+                LoadSidecarFor(file);          // program.ctl, if there is one
+                result = Decompiler.Run(p, Path.GetFileName(file), ctl);
                 if (lp.Converted) result.Report = "Opened from " + Path.GetFileName(file) + " (" + lp.Format + "):\n  " + string.Join("\n  ", lp.Notes) + "\n\n" + result.Report;
                 path = file;
                 listing.Text = UiCommon.Crlf(result.Listing);
@@ -143,7 +146,7 @@ namespace ZX81Compiler
                 tabs.SelectedTab = result.Basic != null ? pageBasic : pageListing;
                 status.Text = Path.GetFileName(file) + ": " + p.Lines.Count + " lines; " + p.AutoRunDescription() +
                     (result.Recovered.Success ? (result.Recovered.Verified ? "; BASIC rebuilt and verified" : "; BASIC rebuilt") : "") +
-                    (lp.Converted ? " (read from " + lp.Format + " - see the Report tab)" : "");
+                    (lp.Converted ? " (read from " + lp.Format + " - see the Report tab)" : "") + CtlNote;
             }
             catch (Exception e) { UiCommon.Error(this, "Could not decompile the file:\n" + e.Message); }
             finally { Cursor = Cursors.Default; }
@@ -206,7 +209,7 @@ namespace ZX81Compiler
         const string HelpText =
 @"# Opening a program
 Open a .p, .81 or .p81 file, a tape (a .wav recording of a ZX81 tape, 8 to 32-bit, mono or stereo, or a .tzx image), or a ZX80 program (.o or .80), which is converted to ZX81 BASIC. Use File > Open (Ctrl+O), the Open button, or drag the file onto the window.
-If a recording can't be read, the message gives the time in it, as [minutes:seconds.milliseconds], where it went wrong. For a tape, the Report tab starts with where the program was found.
+If a recording can't be read, the message gives the time in it, as [minutes:seconds.milliseconds], where it went wrong. The .P Toolkit's Options > Audio Import Options, or zx81dc --wav-threshold, --wav-hysteresis and --wav-invert, can read recordings that the standard settings can't. For a tape, the Report tab starts with where the program was found.
 
 # Listing (as stored)
 The BASIC exactly as it is stored in the file. Anything that can't be written as ordinary BASIC text, such as machine code hidden in REM lines, is written as \hh escapes (one byte in hex), so Make .p turns the text back into exactly the same bytes. Lines starting with # are notes and are ignored.
@@ -220,6 +223,14 @@ Ordinary machine code (written by hand or by other tools) can't be turned back i
 
 # Machine code (.asm)
 Machine code is found by following every USR in the program: in REM lines, split across several lines, in the variables area or after the display file. Known ROM routines and system variables are shown by name, and the bytes after RST 28h (the ROM calculator) and RST 08h (error reports) are explained. The listing can be assembled again (e.g. with pasmo) to give the same bytes.
+
+# Control files (.ctl)
+A control file tells the decompiler what it can't work out, and names things in the .asm. program.ctl next to the program is used automatically; File > Load Control File uses another, and File > Save Control File writes one. One directive per line (; or # starts a comment); addresses are decimal (16514) or hex (4082h, 0x4082, $4082):
+LABEL addr name :: Name an address (instead of L4082), in label lines and operands.
+COMMENT addr text :: A comment line above that address.
+CODE start [end] :: Disassemble from start: code that no USR reaches, e.g. through a jump table or a stack trick. With an end, the whole range is decoded instruction by instruction.
+DATA start length :: These bytes are data (DB lines), never code; tracing stops there.
+Right-click a line of the Machine code tab for Rename Label and Add Comment: the .asm is redrawn at once, and you are asked to save the control file before the changes would be lost. zx81dc uses program.ctl too, or --ctl file.
 
 # Make .p
 Turns the Listing or BASIC tab, with your edits, into a .p file for an emulator. Tick the boxes to keep the original screen and saved variables.

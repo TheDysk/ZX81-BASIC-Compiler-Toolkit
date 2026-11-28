@@ -88,14 +88,15 @@ namespace ZX81Compiler
         /// <summary>Open a program in any supported format (.p .81 .p81 .o .80 .wav .tzx).
         /// Shows an error box and returns null if it can't be read; a .wav that can't be
         /// decoded is reported with the [mm:ss.ms] time in the recording where it failed.</summary>
-        public static LoadedProgram OpenProgram(IWin32Window owner, string file)
+        public static LoadedProgram OpenProgram(IWin32Window owner, string file, AudioOptions audio = null, string audioHint = null)
         {
-            try { return TapeFormats.Load(file); }
+            try { return TapeFormats.Load(file, audio); }
             catch (TapeDecodeException e)
             {
                 string where = e.Seconds >= 0 ? "\n\nThe problem is " + TapeDecodeException.Stamp(e.Seconds) + " (minutes:seconds.milliseconds) into the recording." : "";
                 MessageBox.Show(owner, "Could not read the tape in " + System.IO.Path.GetFileName(file) + ":\n\n" + e.Message + where +
-                    "\n\nTry a cleaner recording: a higher volume, no tone controls or noise reduction, and the whole program from the start.",
+                    "\n\nTry a cleaner recording: a higher volume, no tone controls or noise reduction, and the whole program from the start." +
+                    (audioHint != null ? "\n\n" + audioHint : "") + (audio != null && !audio.IsDefault ? "\n\n(Read with " + audio + ".)" : ""),
                     "Tape could not be read", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             catch (Exception e) { Error(owner, "Could not open " + System.IO.Path.GetFileName(file) + ":\n" + e.Message); }

@@ -15,13 +15,13 @@ namespace ZX81Compiler
     public static class Versions
     {
         /// <summary>ZX81 BASIC Compiler (GUI and command line).</summary>
-        public const string Compiler = "1.00";
+        public const string Compiler = "0.9";
         /// <summary>ZX81 Decompiler (GUI and command line).</summary>
-        public const string Decompiler = "1.00";
+        public const string Decompiler = "0.9";
         /// <summary>.P Toolkit.</summary>
-        public const string Browser = "1.00";
+        public const string Browser = "0.9";
 
-        /// <summary>The form shown to users: "V1.00".</summary>
+        /// <summary>The form shown to users: "V0.9".</summary>
         public static string Show(string v) { return "V" + v; }
     }
 }

@@ -31,6 +31,11 @@ public static class TapeTest
                 string stem = Path.Combine(args[1], Path.GetFileNameWithoutExtension(args[i]));
                 string name = Path.GetFileNameWithoutExtension(args[i]).ToUpperInvariant();
                 File.WriteAllBytes(stem + ".wav", Tape.MakeWav(p, name));
+                // the same, quiet, with a loud click at the start (needs a lower noise threshold)
+                int crate;
+                var cs = TapeDecode.WavSamples(Tape.MakeWav(p, name), out crate).Select(v => v * 0.15f).ToArray();
+                cs[100] = 1f; cs[101] = -1f;
+                File.WriteAllBytes(stem + "_click.wav", MakeWav(cs, crate, 16, 1, false));
                 File.WriteAllBytes(stem + ".tzx", Tape.MakeTzx(p, name));
                 File.WriteAllBytes(stem + ".p81", TapeDecode.MakeP81(p, name));
                 try { File.WriteAllBytes(stem + ".o", Zx80.FromP(PFile.Load(p), new List<string>())); } catch (Zx80Exception) { }
@@ -117,6 +122,21 @@ public static class TapeTest
         Same(tag + ".tzx direct recording (block 15h)", () => TapeDecode.ReadTzx(DirectRecordingTzx(s, rate), new List<string>()), p, name);
         Same(tag + "TapeFormats.Load(.wav)", () => new List<TapeProgram> { Wrap(TapeFormats.Load(wav, ".wav", "x")) }, p, name);
         Same(tag + "TapeFormats.Load(no extension, sniffed .tzx)", () => new List<TapeProgram> { Wrap(TapeFormats.Load(Tape.MakeTzx(p, name), "", "x")) }, p, name);
+        // audio import options: a loud click at the start makes the (quiet) signal look like
+        // silence with the default noise threshold of 20%; 5% reads it
+        var clicky = s.Select(v => v * 0.15f).ToArray();
+        clicky[100] = 1f; clicky[101] = -1f;
+        byte[] cw = MakeWav(clicky, rate, 16, 1, false);
+        bool failed = false;
+        try { TapeDecode.ReadWav(cw); } catch (TapeDecodeException) { failed = true; }
+        Check(tag + "audio options: a loud click makes the default noise threshold fail", failed);
+        Same(tag + "audio options: noise threshold 5% reads it", () => TapeDecode.ReadWav(cw, new AudioOptions { Threshold = 0.05 }), p, name);
+        Same(tag + "audio options: TapeFormats.Load passes them on", () => new List<TapeProgram> { Wrap(TapeFormats.Load(cw, ".wav", "x", new AudioOptions { Threshold = 0.05 })) }, p, name);
+        Same(tag + "audio options: inverted reading", () => TapeDecode.ReadWav(wav, new AudioOptions { Invert = true }), p, name);
+        Same(tag + "audio options: hysteresis 30%", () => TapeDecode.ReadWav(wav, new AudioOptions { Hysteresis = 0.30 }), p, name);
+        string msg = "";
+        try { TapeDecode.ReadWav(wav, new AudioOptions { Hysteresis = 0.9 }); } catch (TapeDecodeException e) { msg = e.Message; }
+        Check(tag + "audio options: out-of-range settings are refused", msg.Contains("hysteresis"), msg);
     }
 
     static TapeProgram Wrap(LoadedProgram l) { return new TapeProgram { P = l.P, Name = l.Name }; }

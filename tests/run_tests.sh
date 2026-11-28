@@ -34,6 +34,9 @@ mono build/zx81c.exe /tmp/zx81strict1.bas /tmp/zx81strict1.p > /dev/null   # (in
 cmp -s /tmp/zx81strict1.p tests/t1.p && echo "t1 with #STRICT_INT: identical" || echo "t1 with #STRICT_INT: DIFFERENT"
 n=$(mono build/zx81c.exe --strict-int tests/t7.bas /tmp/zx81strict7.p | grep -c "strict integer mode") || true
 echo "t7 with --strict-int: $n floating-point lines refused"
+echo "-- labels (@label:), mixed numbering, label errors, renumbering"
+mcs -langversion:5 -nowarn:414,219,168 -out:/tmp/labeltest.exe src/Core/*.cs tests/cs/LabelTest.cs
+mono /tmp/labeltest.exe | grep -v "^ok    "
 echo "-- --run starts the emulator set up in the INI file (a stand-in script here)"
 printf '#!/bin/sh\necho "$@" > /tmp/zx81emu.out\n' > /tmp/zx81emu.sh; chmod +x /tmp/zx81emu.sh; rm -f /tmp/zx81emu.out
 printf '[Emulator]\nPath=/tmp/zx81emu.sh\nArguments=-q "{file}"\n' > /tmp/zx81test.ini
@@ -105,6 +108,21 @@ echo "-- full floating point programs"
 mono /tmp/tooltest.exe tests/f1.p tests/f2.p tests/f3.p tests/f4.p tests/f5.p tests/f6.p tests/full_t1.p tests/full_t2.p \
   tests/full_t3.p tests/full_t4.p tests/full_t5.p tests/full_t6.p tests/full_t7.p tests/full_t8.p tests/full_t9.p \
   tests/full_t10.p tests/full_t11.p tests/full_fortress.p tests/full_clock.p
+echo "-- control files (.ctl): LABEL, COMMENT, CODE and DATA"
+mcs -langversion:5 -nowarn:414,219,168 -out:/tmp/ctltest.exe src/Core/*.cs tests/cs/CtlTest.cs
+mono /tmp/ctltest.exe | grep -v "^ok    "
+rm -rf /tmp/zx81ctl; mkdir -p /tmp/zx81ctl
+printf '1 REM \\3e\\05\\c3\\8a\\40\\00\\00\\00\\c9\\01\\02\\03\\04\\cd\\93\\40\\c9\\21\\00\\00\\c9\n10 RAND USR 16514\n' > /tmp/zx81ctl/m.txt
+mono /tmp/tooltest.exe --mkp /tmp/zx81ctl/m.txt /tmp/zx81ctl/m.p
+printf 'LABEL 4082h start\nCODE 408Fh\nDATA 408Bh 4\nLABEL 4093h helper\nCOMMENT 408Fh not reached by USR\n' > /tmp/zx81ctl/m.ctl
+mono build/zx81dc.exe /tmp/zx81ctl/m.p --txt /dev/null --basic /dev/null --asm /tmp/zx81ctl/m.asm > /tmp/zx81ctl/out.txt
+grep -q "Control file /tmp/zx81ctl/m.ctl" /tmp/zx81ctl/out.txt && grep -q "CALL helper" /tmp/zx81ctl/m.asm && grep -q "; not reached by USR" /tmp/zx81ctl/m.asm && echo "zx81dc uses program.ctl next to the program: ok" || echo "zx81dc sidecar: FAIL"
+printf 'LABEL 4082h other\n' > /tmp/zx81ctl/other.ctl
+mono build/zx81dc.exe /tmp/zx81ctl/m.p --ctl /tmp/zx81ctl/other.ctl --txt /dev/null --basic /dev/null --asm /tmp/zx81ctl/m2.asm > /dev/null
+grep -q "^other:" /tmp/zx81ctl/m2.asm && ! grep -q "helper" /tmp/zx81ctl/m2.asm && echo "zx81dc --ctl file: ok" || echo "zx81dc --ctl: FAIL"
+echo "-- .P Toolkit screen and tile editors: bytes written back, system variables kept right"
+mcs -langversion:5 -nowarn:414,219,168 -out:/tmp/edittest.exe src/Core/*.cs tests/cs/EditTest.cs
+mono /tmp/edittest.exe | grep -v "^ok    "
 echo "-- large BASIC files for 32K / 64K packs (saved arrays past 32K; display file above 32K)"
 printf '10 REM BIG\n20 PRINT A(1);" ";A(10)\n30 RAND USR 40000\n' > /tmp/zx81big.txt
 mono /tmp/tooltest.exe --mkp /tmp/zx81big.txt /tmp/zx81bigbase.p
@@ -139,6 +157,9 @@ for f in t1.wav clock.tzx; do
   src=tests/${f%.*}.p; [ -f $src ] || src=examples/${f%.*}.p
   cmp -s /tmp/zx81tapes/re_$f.p $src && echo "zx81c compiles $f back to an identical .p: ok" || echo "zx81c compiles $f: DIFFERENT"
 done
+code=0; mono build/zx81dc.exe /tmp/zx81tapes/t1_click.wav --txt /dev/null > /dev/null || code=$?
+mono build/zx81dc.exe /tmp/zx81tapes/t1_click.wav --wav-threshold 5 --extract /tmp/zx81tapes/t1_click.p --txt /dev/null --basic /dev/null --asm /dev/null > /dev/null
+[ $code = 1 ] && cmp -s /tmp/zx81tapes/t1_click.p tests/t1.p && echo "a quiet .wav with a loud click: fails as standard, reads with --wav-threshold 5: ok" || echo "--wav-threshold: FAIL"
 mono build/zx81dc.exe /tmp/zx81tapes/zx80demo.o --txt /tmp/zx81tapes/zx80demo.txt > /dev/null
 grep -q 'PRINT "HELLO ZX80"' /tmp/zx81tapes/zx80demo.txt && grep -q "LET A=12-3" /tmp/zx81tapes/zx80demo.txt && echo "zx81dc reads a ZX80 .o: ok" || echo "zx81dc reads a ZX80 .o: FAIL"
 head -c 300000 /tmp/zx81tapes/t1.wav > /tmp/zx81tapes/cut.wav

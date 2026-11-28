@@ -125,6 +125,9 @@ namespace ZX81Compiler
         ///   IntegerOnly   whole numbers only: anything that would need floating point is a
         ///                 compile error (strict integer mode).</summary>
         public NumberMode Numbers = NumberMode.FullFloat;
+        /// <summary>Labels (--labels, #LABELS): lines may have no number and GOTO/GOSUB may
+        /// use @labels (see Labels.cs). Also switched on by an @name: in the listing.</summary>
+        public bool Labels;
         /// <summary>Integer only (strict integer mode, #STRICT_INT).</summary>
         public bool StrictInt { get { return Numbers == NumberMode.IntegerOnly; } }
         /// <summary>Full floating point.</summary>

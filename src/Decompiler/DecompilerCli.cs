@@ -12,6 +12,8 @@
 //    --p-from listing|basic   which text the .p is made from (default: basic if
 //                  rebuilt, else listing)
 //    --extract file  write the program as read from the input (e.g. a .wav) as a .p file
+//    --ctl file    control file (LABEL / COMMENT / CODE / DATA, see ControlFile.cs);
+//                  default: program.ctl next to the input, if there is one
 //    --report      print the analysis report
 //  Exit codes: 0 = done, 1 = could not read the file (a tape that can't be decoded is
 //  reported with the [mm:ss.ms] time where it went wrong), 2 = bad arguments.
@@ -30,8 +32,8 @@ using System.Reflection;
 [assembly: AssemblyDescription("Turns ZX81 .p files back into BASIC listings and Z80 assembly")]
 [assembly: AssemblyProduct("ZX81 BASIC Toolset")]
 [assembly: AssemblyCopyright("Copyright (c) Simon Round 2026")]
-[assembly: AssemblyVersion("1.00.0.0")]
-[assembly: AssemblyFileVersion("1.00.0.0")]
+[assembly: AssemblyVersion("0.9.0.0")]
+[assembly: AssemblyFileVersion("0.9.0.0")]
 
 namespace ZX81Compiler
 {
@@ -39,8 +41,9 @@ namespace ZX81Compiler
     {
         public static int Main(string[] args)
         {
-            string input = null, extract = null, txt = null, basic = null, asm = null, pout = null, pFrom = null;
+            string input = null, ctlFile = null, extract = null, txt = null, basic = null, asm = null, pout = null, pFrom = null;
             bool report = false;
+            var audio = new AudioOptions();
             try
             {
                 for (int i = 0; i < args.Length; i++)
@@ -54,6 +57,10 @@ namespace ZX81Compiler
                         case "--p-from": pFrom = args[++i].ToLowerInvariant(); break;
                         case "--report": report = true; break;
                         case "--extract": extract = args[++i]; break;
+                        case "--ctl": ctlFile = args[++i]; break;
+                        case "--wav-threshold": audio.Threshold = Percent(args[++i]); break;
+                        case "--wav-hysteresis": audio.Hysteresis = Percent(args[++i]); break;
+                        case "--wav-invert": audio.Invert = true; break;
                         case "-h": case "--help": case "/?": case "-?": case "--?": Usage(); return 0;
                         case "--version": Console.WriteLine("zx81dc - ZX81 Decompiler " + Versions.Show(Versions.Decompiler)); return 0;
                         default:
@@ -63,11 +70,13 @@ namespace ZX81Compiler
                 }
             }
             catch (IndexOutOfRangeException) { Console.WriteLine("An option is missing its file name."); return 2; }
+            catch (FormatException) { Console.WriteLine("--wav-threshold and --wav-hysteresis take a percentage, e.g. --wav-threshold 10"); return 2; }
+            if (audio.Problem() != null) { Console.WriteLine("Audio options: " + audio.Problem() + "."); return 2; }
             if (input == null) { Console.WriteLine("No input file. Use --? for a list of the options."); return 2; }
 
             PFile p;
             LoadedProgram lp;
-            try { lp = TapeFormats.Load(input); p = PFile.Load(lp.P); }
+            try { lp = TapeFormats.Load(input, audio); p = PFile.Load(lp.P); }
             catch (TapeDecodeException e) { Console.WriteLine("Could not read the tape in " + input + ": " + e.Message); return 1; }
             catch (Exception e) { Console.WriteLine("Could not read " + input + ": " + e.Message); return 1; }
             string name = Path.GetFileName(input);
@@ -81,7 +90,20 @@ namespace ZX81Compiler
                 File.WriteAllBytes(extract, lp.P);
                 Console.WriteLine("Written " + extract + " (the program as read, " + lp.P.Length + " bytes)");
             }
-            var r = Decompiler.Run(p, name);
+            // the control file: --ctl, or program.ctl next to the input
+            ControlFile ctl = null;
+            try
+            {
+                if (ctlFile != null) ctl = ControlFile.Load(ctlFile);
+                else { ctl = ControlFile.LoadSidecar(input); if (ctl != null) ctlFile = ControlFile.SidecarPath(input); }
+            }
+            catch (Exception e) { Console.WriteLine("Could not read the control file " + (ctlFile ?? ControlFile.SidecarPath(input)) + ": " + e.Message); return 1; }
+            if (ctl != null)
+            {
+                Console.WriteLine("Control file " + ctlFile + ": " + ctl.Summary(false));
+                foreach (var pr in ctl.Problems) Console.WriteLine("  Warning: " + pr);
+            }
+            var r = Decompiler.Run(p, name, ctl);
             if (lp.Converted) r.Report = "Opened from " + name + " (" + lp.Format + "):\n  " + string.Join("\n  ", lp.Notes) + "\n\n" + r.Report;
             string stem = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(input)), Path.GetFileNameWithoutExtension(input));
 
@@ -118,6 +140,12 @@ namespace ZX81Compiler
             Console.WriteLine("Written " + path + " (" + what + ")");
         }
 
+        /// <summary>"10" or "10%" -> 0.10</summary>
+        static double Percent(string s)
+        {
+            return double.Parse(s.TrimEnd('%'), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) / 100.0;
+        }
+
         static void Usage()
         {
             Console.WriteLine("zx81dc - ZX81 Decompiler " + Versions.Show(Versions.Decompiler));
@@ -137,6 +165,24 @@ Output files (each defaults to the input's name with that extension):
   --p file         also make a .p file from the text (not made unless asked)
   --p-from listing|basic   which text --p uses (default: basic if rebuilt, else listing)
   --extract file   write the program exactly as read (e.g. from a .wav) as a .p file
+
+Control file (.ctl): program.ctl next to the input is used automatically, or:
+  --ctl file       use this control file. One directive per line (; starts a comment):
+                     LABEL addr name       name an address in the .asm (instead of Lxxxx)
+                     COMMENT addr text     a comment line above that address
+                     CODE start [end]      disassemble from start (and decode all of
+                                           start..end): code that no USR reaches
+                     DATA start length     bytes that are data, never code
+                   Addresses: decimal (16514) or hex (4082h, 0x4082, $4082)
+
+Reading .wav recordings that don't decode with the standard settings:
+  --wav-threshold N   noise threshold, in % of the loudest sound (default 20): quieter
+                      than this counts as silence. Lower it if the recording fades or
+                      has a loud click; raise it if hiss is read as pulses
+  --wav-hysteresis N  how far (in % of the signal) a level must swing to count
+                      (default 15). Raise it for ripples on the pulses, lower it for
+                      weak, rounded pulses
+  --wav-invert        turn the recording upside down before reading it
 
 Other options:
   --report         print the analysis report (includes how numbers are worked out)
