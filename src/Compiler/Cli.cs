@@ -55,8 +55,15 @@ Labels (also switched on by a #LABELS line, or any @name: in the listing):
                    explicit ones), and @name: labels a line for GOTO @name, GO SUB
                    @name, IF ... THEN @name, RUN @name ...
 
+Output (also chosen by a #BASIC_ONLY line in the listing):
+  --basic-only     don't compile: put the listing in the .p file as ordinary ZX81 BASIC,
+                   run by the ZX81's own BASIC (labels and missing line numbers are
+                   filled in, every line is checked; numbers are always full floating
+                   point). Can be used with --ram 1 or 2 for an unexpanded ZX81.
+
 Other options:
-  --ram 16|32|64   RAM the program is for: 16K (default), or a 32K or 64K RAM pack
+  --ram N          RAM the program is for: 16 (16K, the default), or 32 or 64 for a 32K
+                   or 64K RAM pack; with --basic-only also 1 or 2 (an unexpanded ZX81)
   --no-autorun     don't start the program by itself after LOAD
   --no-break       don't check for BREAK (SPACE) at GOTO and NEXT (a little faster)
   --lower-inverse  lower-case letters in strings become inverse video
@@ -92,7 +99,7 @@ read, 3 compiled but the emulator couldn't be started.
                     case "--maxstr": opt.MaxString = Math.Max(1, Math.Min(255, int.Parse(args[++i]))); break;   // clamp to 1..255
                     case "--ram":
                         opt.Ram = int.Parse(args[++i].TrimEnd(new[] { 'K', 'k' }));
-                        if (opt.Ram != 16 && opt.Ram != 32 && opt.Ram != 64) { outw.WriteLine("--ram must be 16, 32 or 64"); return 1; }
+                        if (opt.Ram != 1 && opt.Ram != 2 && opt.Ram != 16 && opt.Ram != 32 && opt.Ram != 64) { outw.WriteLine("--ram must be 16, 32 or 64 (or 1 or 2 with --basic-only)"); return 2; }
                         break;
                     case "--asm": asmFile = args[++i]; break;
                     case "--float":                                            // how numbers are worked out
@@ -105,6 +112,7 @@ read, 3 compiled but the emulator couldn't be started.
                         }
                     case "--strict-int": opt.Numbers = NumberMode.IntegerOnly; break;   // the same as --float int
                     case "--labels": opt.Labels = true; break;                  // like #LABELS in the listing
+                    case "--basic-only": opt.BasicOnly = true; break;           // like #BASIC_ONLY: ordinary BASIC, not compiled
                     case "--run": run = true; break;                           // start the emulator afterwards
                     case "--emulator": emulator = args[++i]; run = true; break; // ... this one (not saved)
                     case "--version":
@@ -134,11 +142,12 @@ read, 3 compiled but the emulator couldn't be started.
             {
                 // out of memory: still show the sizes, to help decide what to cut
                 if (res.MemoryEnd != 0) outw.WriteLine(Compiler.SizeLines(res));
-                outw.WriteLine("Compilation failed.");
+                outw.WriteLine(res.BasicOnly ? "The listing has errors: no .p file written." : "Compilation failed.");
                 return 1;
             }
             File.WriteAllBytes(output, res.PFile);
             if (asmFile != null && res.Listing != null) File.WriteAllText(asmFile, res.Listing + res.Symbols);
+            if (asmFile != null && res.BasicOnly) outw.WriteLine("(no assembly listing: BASIC only output has no machine code)");
             outw.WriteLine(res.Summary);
             outw.WriteLine("Written " + output);
             if (run)
@@ -172,16 +181,7 @@ read, 3 compiled but the emulator couldn't be started.
                 bool rebuilt;
                 return Decompiler.ListingForCompiler(TapeFormats.Load(path), Path.GetFileName(path), out rebuilt);
             }
-            byte[] b = File.ReadAllBytes(path);
-            try
-            {
-                // new[] { ... } rather than a single char: .NET Framework has no TrimStart(char)
-                return new UTF8Encoding(false, true).GetString(b).TrimStart(new[] { '\uFEFF' });
-            }
-            catch (DecoderFallbackException)
-            {
-                return Encoding.GetEncoding(1252).GetString(b);
-            }
+            return TapeFormats.ReadListingText(path);
         }
     }
 

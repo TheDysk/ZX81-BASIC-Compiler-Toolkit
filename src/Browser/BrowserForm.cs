@@ -79,6 +79,7 @@ namespace ZX81Compiler
             var menu = new MenuStrip();
             var file = new ToolStripMenuItem("&File");
             file.DropDownItems.Add(new ToolStripMenuItem("&Open program or tape (.p .p81 .o .wav .tzx)...", null, (s, e) => Open(), Keys.Control | Keys.O));
+            file.DropDownItems.Add(new ToolStripMenuItem("&Import BASIC Listing (.txt .bas) as ordinary BASIC...", null, (s, e) => ImportListing(), Keys.Control | Keys.I));
             file.DropDownItems.Add(new ToolStripMenuItem("&Save as .p...", null, (s, e) => SaveP(), Keys.Control | Keys.S));
             file.DropDownItems.Add(new ToolStripSeparator());
             file.DropDownItems.Add(new ToolStripMenuItem("&Run in Emulator", null, (s, e) => RunInEmulator(), Keys.Control | Keys.F5));
@@ -108,7 +109,8 @@ namespace ZX81Compiler
             menu.Items.Add(file); menu.Items.Add(export); menu.Items.Add(options); menu.Items.Add(help);
 
             var tools = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden };
-            tools.Items.Add(new ToolStripButton("Open...", null, (s, e) => Open()) { Font = new Font(Font, FontStyle.Bold), ToolTipText = "Open a .p, .p81, ZX80 .o, .wav or .tzx file (Ctrl+O)" });
+            tools.Items.Add(new ToolStripButton("Open...", null, (s, e) => Open()) { Font = new Font(Font, FontStyle.Bold), ToolTipText = "Open a .p, .p81, ZX80 .o, .wav or .tzx file, or a BASIC listing to import (Ctrl+O)" });
+            tools.Items.Add(new ToolStripButton("Import listing...", null, (s, e) => ImportListing()) { ToolTipText = "Turn a BASIC text listing (.txt .bas) into a .p file of ordinary ZX81 BASIC, not compiled (Ctrl+I)" });
             tools.Items.Add(new ToolStripButton("Run in Emulator  (Ctrl+F5)", null, (s, e) => RunInEmulator()));
             tools.Items.Add(new ToolStripButton("Play Audio to ZX81", null, (s, e) => PlayAudio()) { ToolTipText = "Play the program as tape sound into a real ZX81's EAR socket" });
             tools.Items.Add(new ToolStripSeparator());
@@ -140,12 +142,14 @@ namespace ZX81Compiler
 
         void Open()
         {
-            using (var d = new OpenFileDialog { Filter = TapeFormats.OpenFilter, Title = "Open a ZX81 program or tape" })
+            // listings too: they are imported as ordinary BASIC (File > Import BASIC Listing)
+            using (var d = new OpenFileDialog { Filter = TapeFormats.CompilerOpenFilter, Title = "Open a ZX81 program, tape or BASIC listing" })
                 if (d.ShowDialog(this) == DialogResult.OK) OpenFile(d.FileName);
         }
 
         public void OpenFile(string file)
         {
+            if (TapeFormats.IsListingFile(file)) { ImportListing(file); return; }   // a text listing: imported as BASIC
             if (edited && MessageBox.Show(this, "You have edited bytes that aren't saved. Open another file anyway?", ".P Toolkit", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
             if (Path.GetExtension(file).ToLowerInvariant() == ".wav") lastWav = file;
             var lp = UiCommon.OpenProgram(this, file, audio,    // shows the error ([mm:ss.ms] for audio) itself
@@ -281,7 +285,16 @@ namespace ZX81Compiler
         const string HelpText =
 @"# Opening a program
 Open a .p, .81 or .p81 file, a tape (a .wav recording of a ZX81 tape, 8 to 32-bit, mono or stereo, or a .tzx image), or a ZX80 program (.o or .80), which is converted to ZX81 BASIC. Use File > Open (Ctrl+O), the Open button, or drag the file onto the window.
+A BASIC listing (.txt, .bas or .b81) can be opened too: it is imported as ordinary BASIC (see below).
 If a recording can't be read, a message gives the time in it, as [minutes:seconds.milliseconds], where it went wrong: where the signal was lost, a bit that couldn't be read, or where the recording ends in the middle of the program. If a tape holds several programs, the first is opened and the others are listed.
+
+# Importing a BASIC listing
+File > Import BASIC Listing (Ctrl+I), or opening or dropping a .txt, .bas or .b81 file, turns a text listing into a .p file of ordinary ZX81 BASIC, exactly as if it had been typed in on a ZX81. It is not compiled: the ZX81's own BASIC runs it, and it can be LISTed, edited and SAVEd on the ZX81. It does the same as BASIC only output in the compiler (the same code):
+- Labels (@name:) and missing line numbers are filled in, as the compiler does (lines without numbers are numbered even if there are no labels), and the compiler's own # lines are left out.
+- Every line is checked first. If there are errors, they are listed and no program is made; the compiler shows the same messages and takes you to each line.
+- An assignment without LET gets LET, and THEN followed by a line number gets GOTO, as the ZX81 needs; each change is listed as a warning.
+- Choose the RAM of the ZX81 it is for: 1K, 2K or 16K or more. The program, screen and variables are checked to fit, and with 1K or 2K the screen is saved collapsed, as a ZX81 without a RAM pack keeps it. Choose too whether it runs by itself after LOAD, and whether lower case in strings becomes inverse video.
+The program is then shown in the tabs like any opened file. Use File > Save as .p to keep it, Export > Cassette audio (.wav) or Tape image (.tzx) to load it into a real ZX81, or File > Run in Emulator to try it.
 
 # The tabs
 Overview :: The auto-run status (whether the program starts by itself after LOAD, and at which line), the system variables 4009h-407Ch with their values in plain English, and a memory map. RAMTOP isn't saved in a .p file, so choose the machine (1K to 16K, or a 32K or 64K RAM pack) the map is drawn for. Warnings show anything a real ZX81 can't do with the file. For a program made by the ZX81 BASIC Compiler it also says where its variables go while it runs and how it works out numbers: full floating point (5-byte numbers, as the ZX81) or float islands (2-byte whole numbers).

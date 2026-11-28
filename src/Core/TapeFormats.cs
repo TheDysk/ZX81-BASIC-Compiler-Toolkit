@@ -66,6 +66,33 @@ namespace ZX81Compiler
         /// tapes (which are opened as BASIC through the decompiler).</summary>
         public static readonly string CompilerOpenFilter = MakeFilter("All listings, programs and tapes", ListingTypes.Concat(ProgramTypes));
 
+        /// <summary>Open dialog filter for BASIC listings only (.txt .bas .b81).</summary>
+        public static readonly string ListingFilter = MakeFilter("ZX81 BASIC listings", ListingTypes).Replace("|ZX81 BASIC listings (*.txt, *.bas, *.b81)|*.txt;*.bas;*.b81|", "|");
+
+        /// <summary>Is this a BASIC listing (.txt .bas .b81), by its extension?</summary>
+        public static bool IsListingFile(string path)
+        {
+            string e = Path.GetExtension(path).ToLowerInvariant();
+            return e == ".txt" || e == ".bas" || e == ".b81";
+        }
+
+        /// <summary>The text of a listing file. Tries UTF-8 first (removing the byte order
+        /// mark that Notepad may add); if the file isn't valid UTF-8 it is read as
+        /// Windows-1252, which covers older files with a £ sign saved by other editors.</summary>
+        public static string ReadListingText(string path)
+        {
+            byte[] b = File.ReadAllBytes(path);
+            try
+            {
+                // new[] { ... } rather than a single char: .NET Framework has no TrimStart(char)
+                return new System.Text.UTF8Encoding(false, true).GetString(b).TrimStart(new[] { '\uFEFF' });
+            }
+            catch (System.Text.DecoderFallbackException)
+            {
+                return System.Text.Encoding.GetEncoding(1252).GetString(b);
+            }
+        }
+
         /// <summary>Is this a program or tape (rather than a text listing), by its extension?</summary>
         public static bool IsProgramFile(string path)
         {

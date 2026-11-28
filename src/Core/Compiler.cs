@@ -53,6 +53,7 @@ namespace ZX81Compiler
         public NumberMode Numbers;        // how numbers were worked out (option or directive)
         public bool StrictInt { get { return Numbers == NumberMode.IntegerOnly; } }
         public int MemoryEnd;             // first byte after the variables (0 if the layout wasn't reached)
+        public bool BasicOnly;            // BASIC only output (BasicOnly.cs): CodeSize is the BASIC program's size
         public bool UsesCalc;             // uses the ROM calculator (extra room after E_LINE)
         /// <summary>Summary shown after a successful compile: several lines (sizes in bytes
         /// and K, where things go, how much memory is left), separated by newlines.</summary>
@@ -76,6 +77,16 @@ namespace ZX81Compiler
             // directives: a line #FULL_FLOAT, #FLOAT_ISLANDS or #STRICT_INT chooses how
             // numbers are worked out, whatever the options say (the last one counts)
             opt = opt.Clone();
+            // BASIC only (the Output box, --basic-only or a #BASIC_ONLY line): not compiled,
+            // the listing goes into the .p file as ordinary ZX81 BASIC
+            if (BasicOnly.Wanted(text)) opt.BasicOnly = true;
+            if (opt.BasicOnly) return BasicOnly.Build(text, opt);
+            if (opt.Ram < 16)
+            {
+                res.Diagnostics.Add(new Diagnostic { IsError = true, BasicLine = -1, Message = "a compiled program needs at least 16K of RAM (the machine code, " +
+                    "its runtime and a full screen don't fit " + opt.Ram + "K). Choose 16K, or BASIC only output to run the listing as ordinary BASIC." });
+                return res;
+            }
             NumberMode chosen = opt.Numbers;
             string directive = null;
             foreach (string raw in text.Replace("\r", "").Split('\n'))
@@ -175,6 +186,9 @@ namespace ZX81Compiler
         /// memory): machine code, variables, and the memory used and left.</summary>
         public static string SizeLines(CompileResult r)
         {
+            if (r.BasicOnly)
+                return "BASIC program: " + Size(r.CodeSize) + "; variables at least " + Size(r.VarsSize) + "; " +
+                    "memory needed up to about " + r.MemoryEnd + " (" + Size(r.MemoryEnd - 0x4000) + " of RAM, not counting workspace).";
             var sb = new StringBuilder();
             sb.Append("Machine code: " + Size(r.CodeSize) + " at " + CodeStart + "-" + (CodeStart + r.CodeSize - 1) + ".\n");
             sb.Append("Variables: " + Size(r.VarsSize) + " at " + r.VarsAddress + "-" + (r.MemoryEnd - 1) + " (made when the program runs; not in the .p file).\n");
@@ -209,6 +223,18 @@ namespace ZX81Compiler
                 var o = opt.Clone();      // every option (RAM, numbers, labels ...), without the listing
                 o.MakeListing = false;
                 var r = Compile(listing, o);
+                if (r.BasicOnly)
+                {
+                    if (r.Success) return "Estimated size (BASIC only):\n" + r.Summary;
+                    if (r.MemoryEnd == 0)
+                    {
+                        int e = r.Diagnostics.Count(d => d.IsError);
+                        return "Estimated size: not known yet - the listing has " + e + " error" + (e == 1 ? "" : "s") + " (press F7 to check the syntax and see them).";
+                    }
+                    string more = "";
+                    if (o.Ram < 16) { o.Ram = 16; if (Compile(listing, o).Success) more = " It would fit a ZX81 with a 16K RAM pack (choose 16K in the RAM box)."; }
+                    return "Estimated size (BASIC only):\n" + SizeLines(r) + "\nIt does NOT fit a ZX81 with " + r.Ram + "K RAM." + more;
+                }
                 if (r.MemoryEnd == 0)
                 {
                     int errs = r.Diagnostics.Count(d => d.IsError);
@@ -313,7 +339,7 @@ namespace ZX81Compiler
                     var lex = new Lexer(body, num, opt.LowerIsInverse);
                     var toks = lex.Run();
                     foreach (var w in lex.Warnings) diags.Add(new Diagnostic { BasicLine = num, SourceLine = i + 1, Message = w });
-                    var par = new Parser { FullFloat = opt.FullFloat };
+                    var par = new Parser { FullFloat = opt.FullFloat, Interpreted = opt.BasicOnly };
                     // a line number with nothing after it (just the End token) does nothing
                     Stmt st = toks.Count == 1 ? new SimpleStmt("NOP") : par.ParseLine(toks, num);
                     foreach (var w in par.Warnings) diags.Add(new Diagnostic { BasicLine = num, SourceLine = i + 1, Message = w });

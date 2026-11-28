@@ -44,7 +44,8 @@ namespace ZX81Compiler
         readonly ListBox messages;                             // errors / warnings (Diagnostic objects) and summaries (strings)
         readonly CheckBox chkAutorun, chkBreak, chkLower, chkAsm;   // the compile options
         readonly NumericUpDown numMaxStr;                      // Options.MaxString
-        readonly ComboBox cbRam;                               // Options.Ram: 16K, 32K or 64K
+        readonly ComboBox cbRam;                               // Options.Ram: 1K, 2K (BASIC only), 16K, 32K or 64K
+        readonly ComboBox cbOutput;                            // Options.BasicOnly: machine code (compiled) or BASIC only
         readonly ComboBox cbNumbers;                           // Options.Numbers: full floating point, float islands, integer only
         readonly ToolStripStatusLabel status;                  // status bar text
         // ---- state ----
@@ -59,7 +60,7 @@ namespace ZX81Compiler
             // Wide enough for the whole options row; never bigger than the screen. If the
             // window is made narrower, the options wrap onto a second row instead of vanishing.
             var work = Screen.PrimaryScreen.WorkingArea;
-            Width = Math.Min(1360, work.Width); Height = Math.Min(760, work.Height);
+            Width = Math.Min(1560, work.Width); Height = Math.Min(760, work.Height);
             MinimumSize = new Size(640, 420);
             StartPosition = FormStartPosition.CenterScreen;
             AllowDrop = true;    // files can be dragged onto the window
@@ -86,7 +87,7 @@ namespace ZX81Compiler
             var help = new ToolStripMenuItem("&Help");
             help.DropDownItems.Add(new ToolStripMenuItem("&How it works / Supported BASIC...", null, (s, e) => ShowHelp(), Keys.F1));
             help.DropDownItems.Add(new ToolStripMenuItem("&About", null, (s, e) => MessageBox.Show(this,
-                "ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler) + "\n\nCompiles a ZX81 BASIC text listing into Z80 machine code held in line 0 (REM), with line 10 RAND USR 16514, saved as a .p file.\n\nTarget: ZX81 with 16K, 32K or 64K RAM." + UiCommon.AboutText, "About")));
+                "ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler) + "\n\nCompiles a ZX81 BASIC text listing into Z80 machine code held in line 0 (REM), with line 10 RAND USR 16514, saved as a .p file.\n\nTarget: ZX81 with 16K, 32K or 64K RAM; BASIC only output (not compiled) runs on any ZX81." + UiCommon.AboutText, "About")));
             menu.Items.Add(file); menu.Items.Add(build); menu.Items.Add(BuildToolsMenu()); menu.Items.Add(options); menu.Items.Add(help);
 
             // ---- toolbar ----
@@ -119,8 +120,13 @@ namespace ZX81Compiler
             numMaxStr = new NumericUpDown { Minimum = 1, Maximum = 255, Value = 255, Width = 55 };
             var lblRam = new Label { Text = "RAM:", AutoSize = true, Padding = new Padding(10, 4, 0, 0) };
             cbRam = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 60 };
-            cbRam.Items.AddRange(new object[] { "16K", "32K", "64K" });
-            cbRam.SelectedIndex = 0;
+            cbRam.Items.AddRange(new object[] { "1K", "2K", "16K", "32K", "64K" });
+            cbRam.SelectedIndex = 2;   // 16K
+            var lblOut = new Label { Text = "Output:", AutoSize = true, Padding = new Padding(0, 4, 0, 0) };
+            cbOutput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170 };
+            cbOutput.Items.AddRange(new object[] { "Machine code (compiled)", "BASIC only (not compiled)" });
+            cbOutput.SelectedIndex = 0;
+            cbOutput.SelectedIndexChanged += (s, e) => UpdateOutputControls();
             var tips = new ToolTip();   // the hints shown when the mouse rests on an option
             tips.SetToolTip(chkAutorun, "The program starts by itself when loaded (via line 10 RAND USR 16514).");
             tips.SetToolTip(chkBreak, "Checks the BREAK key on every GOTO and NEXT, like ZX81 BASIC. Untick for games that use SPACE.");
@@ -134,8 +140,14 @@ namespace ZX81Compiler
             tips.SetToolTip(lblNum, numTip);
             tips.AutoPopDelay = 30000;
             tips.SetToolTip(numMaxStr, "Room reserved for each ordinary string variable (A$..Z$). Lower it if you run out of memory.");
-            tips.SetToolTip(cbRam, "The RAM pack the program is for. With 32K or 64K the variables go above 32K (8000h), giving 16K or 32K for variables, arrays and strings. The code itself must still fit below 32K.");
-            foreach (Control c in new Control[] { lblNum, cbNumbers, chkAutorun, chkBreak, chkLower, chkAsm, lbl, numMaxStr, lblRam, cbRam })
+            tips.SetToolTip(cbRam, "The RAM the program is for. Compiled programs need 16K or more; with 32K or 64K the variables go above 32K (8000h), giving 16K or 32K for variables, arrays and strings. The code itself must still fit below 32K.\n1K and 2K (an unexpanded ZX81) are for BASIC only output.");
+            string outTip = "Machine code (compiled): the listing is compiled to fast Z80 machine code (the usual choice).\n" +
+                "BASIC only (not compiled): the listing goes into the .p file as ordinary ZX81 BASIC, as if typed in, and the ZX81's own BASIC runs it. " +
+                "Labels and missing line numbers are filled in and every line is checked. Numbers are always full floating point.\n" +
+                "A #BASIC_ONLY line in the listing chooses BASIC only too.";
+            tips.SetToolTip(cbOutput, outTip);
+            tips.SetToolTip(lblOut, outTip);
+            foreach (Control c in new Control[] { lblOut, cbOutput, lblNum, cbNumbers, chkAutorun, chkBreak, chkLower, chkAsm, lbl, numMaxStr, lblRam, cbRam })
             {
                 c.Margin = new Padding(4, 0, 12, 4);
                 opts.Controls.Add(c);
@@ -245,6 +257,7 @@ namespace ZX81Compiler
                 {
                     var m = NumberModes.Directive(l);
                     if (m != null) cbNumbers.SelectedIndex = (int)m.Value;
+                    if (BasicOnly.IsDirective(l)) cbOutput.SelectedIndex = 1;   // #BASIC_ONLY
                 }
                 listingPath = program ? null : path;   // Save asks for a name for a listing made from a program
                 outputPath = null;
@@ -287,6 +300,15 @@ namespace ZX81Compiler
             return true;
         }
 
+        /// <summary>BASIC only output has no machine code: the options that only affect
+        /// compiled code are greyed out while it is chosen.</summary>
+        void UpdateOutputControls()
+        {
+            bool compiled = cbOutput.SelectedIndex == 0;
+            foreach (Control c in new Control[] { cbNumbers, chkBreak, numMaxStr, chkAsm }) c.Enabled = compiled;
+            status.Text = compiled ? "Output: machine code (compiled)." : "Output: BASIC only - the listing is saved as ordinary ZX81 BASIC, run by the ZX81 itself (not compiled).";
+        }
+
         /// <summary>Read the option controls into an Options object.</summary>
         Options GetOptions()
         {
@@ -297,8 +319,9 @@ namespace ZX81Compiler
                 LowerIsInverse = chkLower.Checked,
                 MaxString = (int)numMaxStr.Value,
                 MakeListing = chkAsm.Checked,
-                Ram = 16 << cbRam.SelectedIndex,         // 16, 32, 64
-                Numbers = (NumberMode)cbNumbers.SelectedIndex
+                Ram = new[] { 1, 2, 16, 32, 64 }[cbRam.SelectedIndex],
+                Numbers = (NumberMode)cbNumbers.SelectedIndex,
+                BasicOnly = cbOutput.SelectedIndex == 1
             };
         }
 
@@ -329,7 +352,7 @@ namespace ZX81Compiler
         {
             var res = RunCompiler();
             ShowDiagnostics(res);
-            if (res.Success) { AddLines(res.Summary); status.Text = "No errors. Machine code " + Compiler.Size(res.CodeSize) + "."; }
+            if (res.Success) { AddLines(res.Summary); status.Text = "No errors. " + (res.BasicOnly ? "BASIC program " : "Machine code ") + Compiler.Size(res.CodeSize) + "."; }
             else status.Text = "Errors found - see messages.";
         }
 
@@ -350,13 +373,13 @@ namespace ZX81Compiler
             if (!res.Success)
             {
                 if (res.MemoryEnd != 0) AddLines(Compiler.SizeLines(res));   // out of memory: show the sizes
-                status.Text = "Compilation failed - see messages.";
+                status.Text = (res.BasicOnly ? "Not saved: the listing has errors" : "Compilation failed") + " - see messages.";
                 if (messages.Items.Count > 0) messages.SelectedIndex = 0;
                 return false;
             }
             if (askName || outputPath == null)
             {
-                using (var d = new SaveFileDialog { Filter = "ZX81 program (*.p)|*.p|All files (*.*)|*.*", Title = "Save compiled program", DefaultExt = "p" })
+                using (var d = new SaveFileDialog { Filter = "ZX81 program (*.p)|*.p|All files (*.*)|*.*", Title = res.BasicOnly ? "Save BASIC program" : "Save compiled program", DefaultExt = "p" })
                 {
                     // suggest the last output name, or the listing's name with .p
                     if (outputPath != null) { d.InitialDirectory = Path.GetDirectoryName(outputPath); d.FileName = Path.GetFileName(outputPath); }
@@ -378,7 +401,7 @@ namespace ZX81Compiler
             }
             AddLines(res.Summary);
             messages.Items.Add("Saved " + outputPath);
-            status.Text = "Saved " + outputPath + "  -  machine code " + Compiler.Size(res.CodeSize) + ", .p file " + Compiler.Size(res.PFile.Length);
+            status.Text = "Saved " + outputPath + "  -  " + (res.BasicOnly ? "BASIC only (not compiled): BASIC program " : "machine code ") + Compiler.Size(res.CodeSize) + ", .p file " + Compiler.Size(res.PFile.Length);
             return true;
         }
 
@@ -476,6 +499,20 @@ An example of a float island:
 - Errors in floating point (SQR -1, LN 0, 1/0 ...) stop the program with the ZX81 report code, e.g. A/10.
 - VAL works out any expression in its string, but can't see the program's variables.
 
+# Output: machine code or BASIC only
+The Output box on the options bar chooses what goes into the .p file.
+Machine code (compiled) :: The default. The listing is compiled to Z80 machine code, as described above. Needs 16K RAM or more.
+BASIC only (not compiled) :: The listing goes into the .p file as ordinary ZX81 BASIC, exactly as if it had been typed in on a ZX81, and the ZX81's own BASIC runs it. Use it to move a listing written on the PC to a ZX81 or an emulator without compiling it; it can then be LISTed, edited and SAVEd on the ZX81 like any other BASIC program. Choose it in the Output box, with --basic-only on the command line, or with a #BASIC_ONLY line in the listing.
+With BASIC only:
+- Labels and missing line numbers are filled in, and the # lines are left out. Lines without numbers are numbered even if the listing has no labels (when compiling, that needs labels to be switched on).
+- Every line is checked for errors before the file is written. The compiler's own limits don't apply (DIM A(N), with a size worked out when the program runs, and arrays of three or more dimensions are fine), only the ZX81's.
+- Two things the compiler accepts but a ZX81 doesn't are put right, each with a warning: an assignment without LET (X=1 becomes LET X=1), and THEN followed by a line number (IF A THEN 100 becomes IF A THEN GOTO 100).
+- Numbers are always full floating point (the ZX81's BASIC has no other kind), so the Numbers box, BREAK, max string length and .asm options are greyed out. Lower case in strings = inverse still applies.
+- Auto-run after LOAD starts the program at its first line; untick it to get the program loaded and waiting for RUN.
+- The RAM box can also be 1K or 2K, for a ZX81 without a RAM pack. The screen is then saved collapsed, as the ZX81 itself does with so little memory. The size check warns if the program, the screen and its variables (at least the arrays with constant sizes) won't fit. Ordinary BASIC only uses the first 16K, so 32K and 64K give it no more room.
+- It runs at the ZX81's own BASIC speed, of course.
+The .P Toolkit can do the same with File > Import BASIC Listing, and then save the program as a tape (.wav or .tzx) to load into a real ZX81.
+
 # Compile & Run
 Build > Compile & Run (Ctrl+F5, or --run on the command line) saves the .p file and starts an emulator with it. Set the emulator up with Options > Configure Emulator...: the program to run and its arguments, where {file} is replaced by the .p file. The settings are kept in ZX81Toolset.ini next to the programs (or in %APPDATA%\ZX81Toolset).
 
@@ -483,7 +520,7 @@ Build > Compile & Run (Ctrl+F5, or --run on the command line) saves the .p file 
 When a listing is opened, a trial compile shows the expected size of the machine code and variables, and whether it fits the ZX81's RAM (and if not, whether a 32K or 64K RAM pack would). After compiling, the sizes are shown in bytes and K.
 
 # RAM packs: 16K, 32K and 64K
-Choose the RAM the program is for in the RAM box (or --ram 16|32|64).
+Choose the RAM the program is for in the RAM box (or --ram 16|32|64). 1K and 2K are only for BASIC only output (see above).
 16K :: The default: everything lives below 32K (8000h).
 32K / 64K :: The variables, arrays and strings go above 32K: 8000h-BFFFh (16K of room) with a 32K pack, 8000h-FFFFh (32K of room) with a 64K pack.
 The machine code and the screen stay below 32K, because a ZX81 can only run code and show the display there, so the code itself can't grow beyond about 15K. RAMTOP can be left alone, or raised (the variables then sit below the stack). When the program starts it checks that the RAM is really there, and shows NEEDS 32K RAM (or 64K) if not.

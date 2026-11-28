@@ -139,6 +139,10 @@ namespace ZX81Compiler
         /// 64. With 32 or 64 the code and screen stay below 8000h (a ZX81 can only run code
         /// and show the display there) and the variables go at 8000h and up.</summary>
         public int Ram = 16;
+        /// <summary>BASIC only (--basic-only, #BASIC_ONLY, the Output box): don't compile;
+        /// write the listing into the .p file as ordinary ZX81 BASIC, which the ZX81 runs
+        /// itself (BasicOnly.cs). Ram can then also be 1 or 2 (an unexpanded ZX81).</summary>
+        public bool BasicOnly;
     }
 
     public class CodeGen

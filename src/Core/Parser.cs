@@ -365,12 +365,12 @@ namespace ZX81Compiler
                         {
                             Expr e = Fold(Num(ParseExpr()));
                             var lit = e as NumLit;
-                            if (lit == null) throw Err("DIM sizes must be constant numbers in compiled programs");
-                            if (lit.Value < 1) throw Err("DIM size must be at least 1");
-                            d.Dims.Add(lit.Value);
+                            if (lit == null && !Interpreted) throw Err("DIM sizes must be constant numbers in compiled programs");
+                            if (lit != null && lit.Value < 1) throw Err("DIM size must be at least 1");
+                            d.Dims.Add(lit != null ? lit.Value : 0);   // 0: worked out when the ZX81 runs it
                         } while (AcceptOp(","));
                         ExpectOp(")");
-                        if (d.Dims.Count > 2) throw Err("only 1 or 2 dimensional arrays are supported");
+                        if (d.Dims.Count > 2 && !Interpreted) throw Err("only 1 or 2 dimensional arrays are supported");
                         return d;
                     }
                 case "INPUT":
@@ -674,7 +674,7 @@ namespace ZX81Compiler
                         var idx = new List<Expr>();
                         do { idx.Add(Num(ParseExpr())); } while (AcceptOp(","));
                         ExpectOp(")");
-                        if (idx.Count > 2) throw Err("only 1 or 2 dimensional arrays are supported");
+                        if (idx.Count > 2 && !Interpreted) throw Err("only 1 or 2 dimensional arrays are supported");
                         return Mk(new NumArr(k.Text[0], idx));
                     }
                     return Mk(new NumVar(k.Text));
@@ -687,7 +687,7 @@ namespace ZX81Compiler
                             p++;
                             do { args.Add(ParseSliceArg()); } while (AcceptOp(","));
                             ExpectOp(")");
-                            if (args.Count > 2) throw Err("too many subscripts");
+                            if (args.Count > 2 && !Interpreted) throw Err("too many subscripts");
                         }
                         return Mk(new StrVar(k.Text[0], args));
                     }
@@ -751,6 +751,10 @@ namespace ZX81Compiler
         /// <summary>Full floating point (Options.Numbers): all arithmetic is floating
         /// point, so constants fold as the ZX81 works them out (7/2 is 3.5).</summary>
         public bool FullFloat;
+        /// <summary>Checking a program that will run as ordinary BASIC (BASIC only output),
+        /// not be compiled: the compiler's own limits (constant DIM sizes, at most two
+        /// dimensions) don't apply, only the ZX81's.</summary>
+        public bool Interpreted;
 
         static bool IsConst(Expr e) { return e is NumLit || e is FloatLit; }
         static bool Whole(double v) { return v == Math.Floor(v) && Math.Abs(v) < 4294967296.0; }

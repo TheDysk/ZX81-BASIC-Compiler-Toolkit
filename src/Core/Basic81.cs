@@ -443,7 +443,11 @@ namespace ZX81Compiler
         /// <summary>Tokenise the text of one line (without its line number). Returns the
         /// bytes including the final 76h. Throws CompileError for bad text.
         /// warnings may be null.</summary>
-        public static byte[] TokenizeBody(string s, List<string> warnings)
+        public static byte[] TokenizeBody(string s, List<string> warnings) { return TokenizeBody(s, warnings, false); }
+
+        /// <summary>As TokenizeBody; lowerIsInverse: lower-case letters inside "strings"
+        /// become inverse video letters (the compiler's --lower-inverse).</summary>
+        public static byte[] TokenizeBody(string s, List<string> warnings, bool lowerIsInverse)
         {
             var items = new List<Item>();
             int pos = 0;
@@ -455,7 +459,7 @@ namespace ZX81Compiler
                 {
                     // the rest of a REM line: characters as they are
                     var it = new Item();
-                    while (pos < s.Length) pos = ReadChar(s, pos, it.Bytes, warnings, false);
+                    while (pos < s.Length) pos = ReadChar(s, pos, it.Bytes, warnings, false, false);
                     items.Add(it);
                     break;
                 }
@@ -479,7 +483,7 @@ namespace ZX81Compiler
                             if (pos + 1 < s.Length && s[pos + 1] == '"') { it.Bytes.Add(0xC0); pos += 2; continue; }
                             pos++; break;
                         }
-                        pos = ReadChar(s, pos, it.Bytes, warnings, true);
+                        pos = ReadChar(s, pos, it.Bytes, warnings, true, lowerIsInverse);
                     }
                     it.Bytes.Add(0x0B);
                     items.Add(it);
@@ -488,7 +492,7 @@ namespace ZX81Compiler
                 if (c == '\\' || c == '%')
                 {
                     var it = new Item();
-                    pos = ReadChar(s, pos, it.Bytes, warnings, false);
+                    pos = ReadChar(s, pos, it.Bytes, warnings, false, false);
                     items.Add(it);
                     continue;
                 }
@@ -565,7 +569,7 @@ namespace ZX81Compiler
         }
 
         /// <summary>Read one character (or escape) at s[pos] into bytes; returns the new position.</summary>
-        static int ReadChar(string s, int pos, List<byte> bytes, List<string> warnings, bool inString)
+        static int ReadChar(string s, int pos, List<byte> bytes, List<string> warnings, bool inString, bool lowerIsInverse)
         {
             char c = s[pos];
             if (c == '\\')
@@ -590,7 +594,7 @@ namespace ZX81Compiler
                 int code = Charset.FromChar(s[pos + 1], false);
                 if (code >= 0) { bytes.Add((byte)(code | 0x80)); return pos + 2; }
             }
-            int z = Charset.FromChar(c, false);
+            int z = Charset.FromChar(c, inString && lowerIsInverse);
             if (z < 0)
             {
                 if (warnings != null) warnings.Add("character '" + c + "' has no ZX81 equivalent, using '?'");

@@ -44,8 +44,9 @@ namespace ZX81Compiler
 
         static bool IsComment(string t) { return t.StartsWith("#") || t.StartsWith(";") || t.StartsWith("//"); }
 
-        /// <summary>Does the listing use labels? (a #LABELS line, or an @name: definition
-        /// at the start of a line, after an optional line number)</summary>
+        /// <summary>Does the listing use labels? (a #LABELS line, an @name: definition
+        /// at the start of a line, after an optional line number, or a GOTO / GO SUB /
+        /// THEN / RUN / LIST @name outside a string)</summary>
         public static bool Wanted(string text)
         {
             foreach (var raw in Lines(text))
@@ -56,9 +57,13 @@ namespace ZX81Compiler
                 int p = 0;
                 while (p < t.Length && char.IsDigit(t[p])) p++;
                 if (Def.IsMatch(t.Substring(p).TrimStart())) return true;
+                // a reference (GOTO @name ...): labels are meant, even if the definition is
+                // missing - that then gets a clear "unknown label" error
+                if (Ref.IsMatch(Regex.Replace(t, "\"[^\"]*\"?", "\"\""))) return true;
             }
             return false;
         }
+        static readonly Regex Ref = new Regex(@"\b(GO\s*TO|GO\s*SUB|THEN|RUN|LIST|LLIST)\s*@[A-Za-z_]", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         static string[] Lines(string text) { return text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'); }
 
