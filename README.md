@@ -52,10 +52,12 @@ The environment variable `ZX81TOOLSET_INI` can point at another settings file.
 - ZX81 graphics and inverse characters through simple escapes in the text listing.
 - Every ZX81 BASIC keyword is accepted, including `SIN COS TAN ASN ACS ATN LN EXP PI`, `LPRINT`, `COPY`, `SAVE`, `LOAD` and `NEW`.
 - Compiled programs write straight to the display file, so they are much faster than interpreted BASIC.
-- Floating-point maths is done by the ZX81 ROM's own calculator, only where a program needs it (see below). Everything else stays fast 16-bit whole-number code.
+- **Three ways to work out numbers** (the **Numbers** box, `--float`, or a line in the listing; see [Numbers](#numbers-full-floating-point-float-islands-or-integer-only)):
+  - **Full floating point** (the default): exactly as the ZX81, using the ROM's own calculator for all arithmetic. 7/2 is 3.5 and variables keep fractions.
+  - **Float islands:** fast 16-bit whole numbers, with floating point only in the expressions that need it.
+  - **Integer only:** whole numbers only. Anything that would need floating point is an error.
 - The machine code (line 0) needs nothing but the ZX81 ROM: keyboard, FAST/SLOW, the calculator, the printer and the tape routines.
 - **Compile & Run** (Ctrl+F5) saves the `.p` file and starts the emulator (see [Emulator set-up](#emulator-set-up)).
-- **Strict integer mode** (`#STRICT_INT`, the **Strict integer** tick box or `--strict-int`) refuses anything that would need floating point, so a program is guaranteed to be all fast code.
 - Programs can be compiled for a 16K, 32K or 64K RAM pack. With 32K or 64K, the variables, arrays and strings use the RAM above 32K (see [RAM packs](#ram-packs-16k-32k-and-64k)).
 
 ### Using the compiler
@@ -81,20 +83,23 @@ In every program's Open dialog, the file type list starts with all the types tha
 Command line:
 
 ```
-zx81c listing.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--strict-int] [--asm listing.asm] [--run] [--emulator path]
+zx81c listing.txt [output.p] [--float full|islands|int] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--asm listing.asm] [--run] [--emulator path]
 ```
 
 | Option | Meaning |
 |---|---|
+| `--float full` | Full floating point, as the ZX81 (the default). See [Numbers](#numbers-full-floating-point-float-islands-or-integer-only). In the GUI this is the **Numbers** box. |
+| `--float islands` | Float islands: fast whole numbers, floating point only where an expression needs it |
+| `--float int` | Integer only: floating point is a compile error. `--strict-int` means the same. |
 | `--no-autorun` | Don't start automatically after LOAD (type `RUN`) |
 | `--no-break` | Don't stop the program when SPACE (BREAK) is pressed. Use this for games that use SPACE. |
 | `--lower-inverse` | Lower-case letters inside strings become inverse video |
 | `--maxstr N` | Capacity of ordinary string variables, 1–255 (default 255). Lower it if memory runs out. |
 | `--ram 16\|32\|64` | The RAM pack the program is for (default 16). See [RAM packs](#ram-packs-16k-32k-and-64k). In the GUI this is the **RAM** box. |
-| `--strict-int` | Strict integer mode: floating point is an error (see [below](#strict-integer-mode)) |
 | `--asm file` | Also write the generated assembly listing |
 | `--run` | After a successful compile, start the emulator set up in `ZX81Toolset.ini` with the `.p` file. Exit code 3 if it can't be started. |
 | `--emulator path` | Start this emulator instead (implies `--run`; not saved) |
+| `--?` | List the options with a line about each (also `-?`, `/?`, `-h`, `--help`) |
 
 ### Listing format
 
@@ -129,17 +134,35 @@ GOTO and GOSUB can use a calculated line number, e.g. `GOTO 100*N`.
 
 **Functions and operators:** `ABS SGN INT SQR PEEK USR CODE LEN VAL CHR$ STR$ INKEY$ RND PI SIN COS TAN ASN ACS ATN LN EXP`, `NOT AND OR`, `+ - * / **`, and comparisons on numbers and strings. String slicing works: `A$(2)`, `A$(2 TO 5)`, `A$( TO 3)`, `A$(4 TO )`. Numeric arrays can have 1 or 2 dimensions; string arrays work like on the ZX81 (`DIM A$(n,m)`).
 
-### Whole numbers and floating point ("float islands")
+### Numbers: full floating point, float islands or integer only
 
-Numbers are normally 16-bit whole numbers (−32768 to 32767), which is what makes compiled programs fast.
+ZX81 BASIC does all its arithmetic in 5-byte floating point. That is accurate, but slow. The compiler can work out numbers in three ways. Choose one with the **Numbers** box on the options bar, with `--float` on the command line, or with a line of its own anywhere in the listing:
 
-An expression is worked out in **floating point** instead when it uses any of these:
+| Mode | How to choose it | What it does |
+|---|---|---|
+| **Full floating point** (default) | **Numbers: Full floating point**, `--float full`, or `#FULL_FLOAT` | Exactly as the ZX81. Every number is a 5-byte floating-point number and all arithmetic is done by the ROM's calculator. |
+| **Float islands** | **Numbers: Float islands**, `--float islands`, or `#FLOAT_ISLANDS` | Fast. Numbers are 16-bit whole numbers worked out by the Z80. Only expressions that need it use the ROM calculator (see below). |
+| **Integer only** | **Numbers: Integer only**, `--float int` (or `--strict-int`), or `#STRICT_INT` | Whole numbers only. Anything that would need floating point is a compile error. |
+
+A directive line in the listing overrides the box or the option, and opening a listing that has one sets the box to match. The decompiler writes the right directive at the top of the BASIC it rebuilds, so it compiles the same way again. The examples start with `#FLOAT_ISLANDS`, because they were written to be fast.
+
+#### Full floating point
+
+Numbers behave exactly as on a ZX81: `7/2` is 3.5, `LET X=2.5` keeps 2.5, `FOR I=0 TO 1 STEP 0.1` works, comparisons see the fractions, and `AND`, `OR` and `NOT` follow ZX81 rules (`3 AND 5` is 3, `0 OR 7` is 1). `RND` uses the ZX81's own formula and seed (`SEED`, 4032h), so after `RAND 1` it gives the same numbers as a real ZX81, and `USR` starts the machine code with BC holding its address, as the ROM does. Maths errors stop the program with the ZX81 report code (`1/0` gives `6`, `SQR -1` gives `A`). The test suite runs programs both compiled this way and in the ROM's own BASIC interpreter, and the screens must match.
+
+- Arithmetic runs at about the speed of ZX81 BASIC's, because the same ROM routines do it. Everything else is compiled machine code as usual: `PRINT`, `GOTO`, `IF`, string handling, the work of a `FOR` loop. So programs are still faster than interpreted BASIC, but not by as much as with float islands.
+- Values that must be whole numbers (`PLOT`, `AT`, `TAB`, `POKE`, `GOTO`, array subscripts, `CHR$` …) are rounded to the nearest whole number, as the ZX81 does.
+- Each numeric variable takes 5 bytes and each array element 5 bytes (2 with float islands), so arrays take more room.
+
+#### Float islands
+
+Numbers are 16-bit whole numbers (−32768 to 32767), which is what makes compiled programs fast. An expression is worked out in **floating point** instead when it uses any of these:
 
 - `SIN COS TAN ASN ACS ATN LN EXP SQR PI VAL`;
 - `RND` on its own;
 - a number with a decimal point, such as `0.5` or `1.0`, or one too big for 16 bits.
 
-The ZX81 ROM's own calculator does the work, so the results are exactly what a ZX81 gives:
+The ZX81 ROM's own calculator does the work, so the result of the island is exactly what a ZX81 gives:
 
 ```basic
 10 FOR A=0 TO 359 STEP 10
@@ -153,19 +176,22 @@ Line 40 prints `0.84147099 1.4142136 3.5`, as on a ZX81.
 - Where a floating-point result has to become a number, it is **rounded** to the nearest whole number, as the ZX81 does when it needs one. That covers storing it in a variable, `PLOT`, `AT`, a subscript, `POKE` and so on.
 - `PRINT`, `LPRINT` and `STR$` show the full value.
 - Comparisons and `IF` conditions use the full value, so `IF SIN X>0.5` works, and `IF 0.3 THEN` counts as true.
-- **Variables hold whole numbers**, so `LET A=H*PI/6` stores 1, not 0.5236. The compiler warns when this happens. Keep the angle inside the expression instead, e.g. `COS (H*PI/6)`. [examples/clock.txt](examples/clock.txt) does this.
+- **Variables hold whole numbers**, so `LET A=H*PI/6` stores 1, not 0.5236. The compiler warns when this happens. Keep the angle inside the expression instead, e.g. `COS (H*PI/6)`, or use full floating point. [examples/clock.txt](examples/clock.txt) does this.
 - Floating point runs at the speed of the ZX81's own maths, which is slow, so keep it out of the busiest loops.
+
+#### Integer only (strict integer mode)
+
+Everything that would start a float island is a compile error naming the line and the cause: `SIN`, `COS` … `PI`, `VAL`, `RND` on its own, and numbers that aren't whole (`2.5`). A whole number written with a decimal point, like `34.0`, is allowed. Use it for games and other programs that must stay fast, so nothing slow can creep in unnoticed. The code is the same as with float islands.
+
+```
+ERROR  Line 10: SIN needs floating point (the ROM calculator), but the numbers are set to integer only (strict integer mode: #STRICT_INT, --float int)
+ERROR  Line 40: the number 2.5 is not a whole number, but the numbers are set to integer only (strict integer mode: #STRICT_INT, --float int)
+```
+
+#### In all three modes
+
 - A maths error such as `SQR -1` or `LN 0` stops the program with the ZX81 report code (`A/10`: the program runs from line 10).
 - `VAL` works out any expression in its string, e.g. `VAL "2*3.5"` is 7. It can't see the program's variables, because those are kept outside BASIC.
-
-### Strict integer mode
-
-A line `#STRICT_INT` anywhere in the listing (or `--strict-int`, or the **Strict integer** tick box) turns floating point off. Everything that would start a float island is then a compile error naming the line and the cause: `SIN`, `COS` … `PI`, `VAL`, `RND` on its own, and numbers that aren't whole (`2.5`). A whole number written with a decimal point, like `34.0`, is allowed. Use it for games and other programs that must stay fast: nothing slow can creep in unnoticed.
-
-```
-ERROR  Line 10: SIN needs floating point (the ROM calculator), but strict integer mode (#STRICT_INT) is on
-ERROR  Line 40: the number 2.5 is not a whole number (strict integer mode, #STRICT_INT, is on)
-```
 
 ### RAM packs: 16K, 32K and 64K
 
@@ -187,9 +213,8 @@ So with `--ram 32` or `--ram 64` (the **RAM** box in the GUI):
 
 #### Differences from ZX81 BASIC
 
-- **Whole-number maths:** outside floating point, division truncates (`7/2` is 3, `-7/2` is −3) and `2**-1` is 0. Write `7/2.0` to get 3.5.
-- **Variables** hold whole numbers (see above). They start at 0 instead of giving "variable not found". Ordinary string variables hold up to 255 characters.
-- **RND:** `RND*n` gives a fast whole number from 0 to n−1, so `INT (RND*6)+1` works as expected. `RND` on its own gives a fraction (0 to 0.99998).
+- **Float islands and integer only** (not full floating point): outside floating point, division truncates (`7/2` is 3, `-7/2` is −3) and `2**-1` is 0 (write `7/2.0` to get 3.5). Variables hold whole numbers. `RND*n` gives a fast whole number from 0 to n−1, so `INT (RND*6)+1` works as expected, and `RND` on its own gives a fraction (0 to 0.99998), but not the ZX81's sequence.
+- **Variables** start at 0 instead of giving "variable not found". Ordinary string variables hold up to 255 characters.
 - **DIM:** sizes must be constant numbers. Arrays are not bounds checked.
 - **Screen:** printing below line 21 scrolls instead of stopping with error 5.
 - **Statements per line:** one, as on the ZX81.
@@ -204,7 +229,7 @@ The decompiler takes any `.p` file and turns it back into text you can read, edi
 - The listing is ZX81 BASIC, so it runs as normal interpreted BASIC once turned back into a `.p`. It can also be fed to the compiler, which accepts every ZX81 keyword, but programs that rely on variables holding fractions will behave differently when compiled (see above).
 - **Machine code:** it finds machine code wherever it is: in line 0, in any `REM` line, split across several lines, or elsewhere in RAM (for example in the variables area or past the end of the program). It starts from every `USR` call it can work out, including `USR 16514`, `USR VAL "16514"`, `USR (PEEK 16396+256*PEEK 16397)` and variables saved with the program, then follows jumps and calls. The result is an `.asm` listing with labels, ROM and system-variable names, and `DB` lines for data. The bytes after `RST 28h` (the ROM calculator) are named, e.g. `DB 1Ch,34h ; calculator: sin, end-calc`, and so are the report codes after `RST 08h`. The listing reassembles to the same bytes.
 - **RAM packs:** the report says how much RAM a file needs: 1K, 2K, 4K, 16K, 32K or 64K. For programs made by the compiler, it says which RAM they were compiled for and where their variables go. It warns about things a real ZX81 can't do: a display file above 32K, machine code above 32K (it needs an M1NOT modification), or a file that goes past 32K (RAMTOP must be raised before loading it). Large `.p` files, such as BASIC programs with big saved arrays, work like any other, up to the full 64K.
-- **Programs made by the compiler:** these are recognised, and the original BASIC is rebuilt from the machine code (with the original line numbers when the program used computed GOTO/GOSUB). Everything the compiler produces is understood, including floating point, `LPRINT`, `COPY`, `SAVE`, `LOAD` and `NEW`. The rebuilt BASIC is recompiled and compared with the file, and the report says whether the result is identical.
+- **Programs made by the compiler:** these are recognised, and the original BASIC is rebuilt from the machine code (with the original line numbers when the program used computed GOTO/GOSUB). Everything the compiler produces is understood, in all three number modes, including floating point, `LPRINT`, `COPY`, `SAVE`, `LOAD` and `NEW`. The decompiler sees from the code whether the program was compiled with full floating point or float islands (integer only makes the same code as float islands), says so in the report, and starts the rebuilt BASIC with `#FULL_FLOAT` or `#FLOAT_ISLANDS` so it compiles the same way. The rebuilt BASIC is recompiled and compared with the file, and the report says whether the result is identical.
 - **New `.p` file:** made from the listing, or from the rebuilt BASIC. The original screen and saved variables can be kept.
 
 ### Using the decompiler
@@ -238,7 +263,10 @@ With no options it writes `program.txt`, plus `program.bas` if the BASIC could b
 | `--p file` | Also write a new `.p` file |
 | `--p-from listing\|basic` | Make that `.p` from the listing (default) or from the rebuilt BASIC |
 | `--extract file` | Write the program exactly as read from the input as a `.p` file (e.g. to turn a `.wav` into a `.p`) |
-| `--report` | Print the report |
+| `--report` | Print the report (it includes the number mode the program was compiled with) |
+| `--?` | List the options with a line about each (also `-?`, `/?`, `-h`, `--help`) |
+
+The decompiler needs no number-mode option: it reads the mode from the program's code.
 
 Limits:
 
@@ -313,6 +341,7 @@ Output goes to `build/`: all five executables.
 - A runtime library written in Z80 assembly handles printing, strings, maths, PLOT, INPUT and so on. Only the routines a program uses are included.
 - Variables are not stored in the `.p` file. They live in free RAM above the BASIC edit line and are cleared when the program starts. This keeps the file small, so it loads quickly from tape. Programs that use the ROM calculator leave 768 bytes more room before the variables for the calculator stack and the ROM's workspace.
 - Floating-point parts of expressions ("float islands") put their values on the ROM calculator's stack and call the calculator (`RST 28h`) for each operation. The result is rounded back into HL, or turned into text by the ROM's `STR$`. The rest of the program never touches the calculator.
+- In full floating point every numeric expression is worked out that way. Variables, array elements and `FOR` values are 5-byte numbers, put on the calculator stack and stored back with small runtime routines, and `FOR`/`NEXT` compare with the calculator too. Only `PEEK`, `CODE`, `LEN`, `USR`, string comparisons and constants are worked out in HL first.
 - The compiler's own code never uses IX, IY or the alternate registers, so it runs safely in SLOW mode with the display on. The ROM's calculator, printer and tape routines are the ROM's own and are safe too.
 
 ### Decompiler and .P Toolkit
@@ -333,7 +362,8 @@ Output goes to `build/`: all five executables.
 - decompiles every compiled test program, checks that the rebuilt BASIC recompiles to identical code, and checks that each listing turns back into an identical `.p` file;
 - runs the 32K and 64K test programs on emulated 64K, 32K and 16K machines, and with RAMTOP raised. They must run, or show `NEEDS 32K RAM` / `NEEDS 64K RAM` on machines without enough RAM;
 - builds large BASIC `.p` files for 32K and 64K packs (`tests/mkbig.py`: saved arrays past 32K and 48K, machine code at 40000, a display file above 32K) and checks they round-trip and get the right RAM estimate and warnings;
-- checks strict integer mode (a whole-number program compiles identically with `#STRICT_INT`; a floating-point one is refused) and `--run` with a stand-in emulator;
+- checks strict integer mode (a whole-number program compiles identically with `#STRICT_INT`; a floating-point one is refused), `--float` and the directives, and `--run` with a stand-in emulator;
+- compiles the full floating point tests `f1`–`f6` and runs each, and the same BASIC in the ZX81 ROM's own interpreter (`tests/cmpbasic.py`, using `run81.py --basic`): the screens and any error report must be identical. That covers arithmetic and functions, fractions in variables, arrays and `FOR` loops, `RND` after `RAND`, `USR`, rounding for `AT`/`PLOT`/`CHR$`, and errors 6 and A. Every test program is also compiled in full floating point and decompiled;
 - turns `.p` files into `.wav`, `.tzx` and `.p81` and back, byte for byte, in the C# test `tests/cs/TapeTest.cs` and again through `zx81dc --extract`. The `.wav` tests include 8-bit stereo, 24-bit and float recordings, inverted, quiet, noisy and fast ones;
 - damages recordings (a dropout, a burst of noise, a cut-off end, silence) and checks each is reported at the right `[mm:ss.ms]` time;
 - converts ZX81 programs to ZX80 `.o` files and back, and a hand-made ZX80 file to ZX81 BASIC;

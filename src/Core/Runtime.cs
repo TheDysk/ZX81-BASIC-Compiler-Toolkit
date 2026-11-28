@@ -496,6 +496,14 @@ sq_zero:
 rt_usr:
     JP (HL)
 ");
+            C("rt_usrb", "", @"
+; USR n in full floating point: as on the ZX81, BC holds n when the machine code
+; starts, so code that leaves BC alone returns its own address
+rt_usrb:
+    LD B,H
+    LD C,L
+    JP (HL)
+");
             // ---------------- random numbers ----------------
             C("rt_rnd16", "", @"
 rt_rnd16:               ; xorshift16, HL = next random
@@ -684,6 +692,138 @@ rt_frnd:
     SUB 16                  ; divide by 65536
     LD (HL),A
     RET
+");
+            // ---------------- full floating point ----------------
+            // In full floating point (the default number mode) numeric variables, array
+            // elements and FOR values are 5-byte ROM floating-point numbers. Values are put
+            // on the calculator stack with rt_fplit (HL = their address), and stored with
+            // rt_fsto. A FOR block is 17 bytes: value, limit, step (5 each), loop address.
+            C("rt_ffull", "rt_finit", @"
+; Start-up in full floating point (the decompiler also recognises the mode by it)
+rt_ffull:
+    JP rt_finit
+");
+            C("rt_fsto", "rt_freset", @"
+; Take the number off the top of the calculator stack and store it in the 5 bytes
+; at HL (a variable or an array element)
+rt_fsto:
+    EX DE,HL                ; DE = where it goes
+    LD HL,(401Ch)           ; STKEND
+    LD BC,-5
+    ADD HL,BC               ; HL = the number on top of the stack
+    LD (401Ch),HL           ; take it off
+    LD BC,5
+    LDIR
+    JP rt_freset
+");
+            C("rt_fpushu", "", @"
+; Put HL (a whole number 0..65535: PEEK, CODE, LEN, USR ...) on the calculator stack
+rt_fpushu:
+    LD B,H
+    LD C,L
+    JP 1520h                ; ROM STACK-BC
+");
+            C("rt_mul5", "", @"
+; HL = HL * 5 (the offset of a 5-byte array element)
+rt_mul5:
+    LD D,H
+    LD E,L
+    ADD HL,HL
+    ADD HL,HL
+    ADD HL,DE
+    RET
+");
+            C("rt_frndz", "", @"
+; RND in full floating point, worked out as the ZX81 does, from its SEED (4032h):
+; seed = (75 * (seed + 1)) mod 65537 - 1, and RND = seed / 65536. So RAND n then RND
+; gives the same numbers as on a real ZX81.
+rt_frndz:
+    LD BC,(4032h)           ; SEED
+    CALL 1520h              ; ROM STACK-BC
+    RST 28h
+    DB 0A1h,0Fh             ; stk-one, add: seed + 1
+    DB 30h,37h,16h          ; stk-data 75
+    DB 04h                  ; multiply
+    DB 30h,80h,41h,00h,00h,80h  ; stk-data 65537
+    DB 2Eh,02h              ; n-mod-m, delete (keep the remainder)
+    DB 0A1h,03h,2Dh,34h     ; stk-one, subtract, duplicate, end-calc
+    CALL 158Ah              ; ROM FP-TO-BC: one copy is the new seed...
+    LD (4032h),BC
+    LD A,(HL)               ; ...the other (HL = its exponent) becomes seed / 65536
+    AND A
+    RET Z                   ; 0 stays 0
+    SUB 10h
+    LD (HL),A
+    RET
+");
+            C("rt_frand", "", @"
+; RAND n in full floating point: sets the ZX81's own SEED (4032h), as the ZX81
+; does; RAND 0 (or RAND on its own) uses the frame counter instead.
+rt_frand:
+    LD A,H
+    OR L
+    JR NZ,fz_set
+    LD HL,(4034h)           ; FRAMES
+fz_set:
+    LD (4032h),HL
+    RET
+");
+            C("rt_fforchk", "rt_fplit", @"
+rt_fforchk:             ; HL = FOR block. carry set if the loop is finished
+; Finished if value > limit (step 0 or more) or value < limit (step negative), as on
+; the ZX81: the sign of value - limit is compared with the sign of the step.
+    LD (FF_BLK),HL
+    CALL rt_fplit           ; the value (rt_fplit leaves HL 5 bytes on, at the limit)
+    CALL rt_fplit           ; the limit
+    RST 28h
+    DB 03h,34h              ; subtract, end-calc: value - limit
+    LD HL,(401Ch)
+    LD DE,-5
+    ADD HL,DE
+    LD (401Ch),HL           ; take the difference off the stack (its bytes stay there)
+    LD A,(HL)
+    OR A                    ; (clears carry)
+    RET Z                   ; exponent 0: value = limit, so the loop runs
+    INC HL
+    LD A,(HL)               ; bit 7: the sign of value - limit
+    LD HL,(FF_BLK)
+    LD DE,11
+    ADD HL,DE
+    XOR (HL)                ; ...against bit 7 of the step's first mantissa byte: its sign
+    RLA                     ; carry = the signs differ: the loop runs
+    CCF                     ; carry = finished
+    RET
+FF_BLK:
+    DW 0
+");
+            C("rt_fnext", "rt_fforchk rt_fplit rt_fsto rt_stop", @"
+rt_fnext:               ; HL = FOR block: value = value + step. If the loop goes on,
+; jump to the body (throwing away this routine's return address); otherwise return
+; to the code after NEXT.
+    PUSH HL
+    CALL rt_fplit           ; the value (HL is left at the limit)
+    LD DE,5
+    ADD HL,DE               ; the step
+    CALL rt_fplit
+    RST 28h
+    DB 0Fh,34h              ; add, end-calc
+    POP HL
+    PUSH HL
+    CALL rt_fsto            ; the new value
+    POP HL
+    CALL rt_fforchk         ; finished?
+    RET C
+    POP HL                  ; discard the return address
+    LD HL,(FF_BLK)
+    LD DE,15
+    ADD HL,DE
+    LD A,(HL)
+    INC HL
+    LD H,(HL)
+    LD L,A                  ; HL = loop body address
+    OR H
+    JP Z,rt_stop            ; 0: NEXT without FOR
+    JP (HL)
 ");
             // ---------------- ZX printer (LPRINT) ----------------
             // Characters go through the ROM's LPRINT-CH (0851h), which collects a line in

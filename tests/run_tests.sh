@@ -1,7 +1,9 @@
 #!/bin/sh
 # Rebuild everything and test the toolset.
 #   1. compiler: compile the test listings, cross-check the assembler, run them on a
-#      Z80 emulator; programs with known results are compared with tests/expected
+#      Z80 emulator; programs with known results are compared with tests/expected.
+#      t1-t12 test float islands (fast whole numbers); f1-f6 test full floating point,
+#      whose results are compared with the same BASIC run by the ROM's own interpreter
 #   2. decompiler: rebuild the BASIC of every compiled test program (must recompile to
 #      identical machine code), and turn each listing back into an identical .p
 #   3. tape: make .wav and .tzx, decode them with an independent decoder (tapecheck.py)
@@ -20,15 +22,15 @@ if [ -f tests/zx81.rom ] || [ -n "$ZX81_ROM" ]; then ROM=yes; fi
 echo "== compiler"
 for f in t1 t2 t3 t4 t5 t6 t7 t8 t9 t10 t11 t12; do
   ram=16; [ $f = t11 ] && ram=32; [ $f = t12 ] && ram=64     # t11/t12: 32K and 64K RAM packs
-  mono build/zx81c.exe --ram $ram tests/$f.bas tests/$f.p --asm tests/$f.asm > /dev/null
+  mono build/zx81c.exe --float islands --ram $ram tests/$f.bas tests/$f.p --asm tests/$f.asm > /dev/null
   echo "$f: $(python3 tests/asmcheck.py tests/$f.asm tests/$f.p | tail -1)"
 done
-mono build/zx81c.exe --no-break --maxstr 40 --no-autorun tests/t5.bas tests/t5opt.p > /dev/null
+mono build/zx81c.exe --float islands --no-break --maxstr 40 --no-autorun tests/t5.bas tests/t5opt.p > /dev/null
 mono build/zx81c.exe examples/fortress.txt examples/fortress.p > /dev/null
 mono build/zx81c.exe examples/clock.txt examples/clock.p > /dev/null
 echo "-- strict integer mode: whole-number programs compile identically, floating point is refused"
 printf '#STRICT_INT\n' | cat - tests/t1.bas > /tmp/zx81strict1.bas
-mono build/zx81c.exe /tmp/zx81strict1.bas /tmp/zx81strict1.p > /dev/null
+mono build/zx81c.exe /tmp/zx81strict1.bas /tmp/zx81strict1.p > /dev/null   # (integer only makes the same code as float islands)
 cmp -s /tmp/zx81strict1.p tests/t1.p && echo "t1 with #STRICT_INT: identical" || echo "t1 with #STRICT_INT: DIFFERENT"
 n=$(mono build/zx81c.exe --strict-int tests/t7.bas /tmp/zx81strict7.p | grep -c "strict integer mode") || true
 echo "t7 with --strict-int: $n floating-point lines refused"
@@ -60,10 +62,49 @@ if [ -n "$ROM" ]; then
 else
   echo "-- no ZX81 ROM (tests/zx81.rom): skipping the floating point / printer / tape runs"
 fi
+echo "== full floating point (the default)"
+for f in f1 f2 f3 f4 f5 f6; do
+  mono build/zx81c.exe tests/$f.bas tests/$f.p --asm tests/$f.asm > /dev/null
+  echo "$f: $(python3 tests/asmcheck.py tests/$f.asm tests/$f.p | tail -1)"
+done
+# the float-islands test programs compiled in full floating point too (5-byte numbers:
+# t11's arrays then need a 64K pack, and t12's don't fit at all)
+for f in t1 t2 t3 t4 t5 t6 t7 t8 t9 t10 t11; do
+  ram=16; [ $f = t11 ] && ram=64
+  mono build/zx81c.exe --float full --ram $ram tests/$f.bas tests/full_$f.p > /dev/null
+done
+mono build/zx81c.exe --float full examples/fortress.txt tests/full_fortress.p > /dev/null
+mono build/zx81c.exe --float full examples/clock.txt tests/full_clock.p > /dev/null
+echo "-- --float / directives / --? "
+printf '10 PRINT 7/2\n' > /tmp/zx81half.bas
+for m in full islands int; do mono build/zx81c.exe --float $m /tmp/zx81half.bas /tmp/zx81half_$m.p | grep -o "numbers: [a-z ]*"; done
+printf '#FLOAT_ISLANDS\n10 PRINT 7/2\n' > /tmp/zx81half2.bas
+mono build/zx81c.exe /tmp/zx81half2.bas /tmp/zx81half2.p > /dev/null
+cmp -s /tmp/zx81half2.p /tmp/zx81half_islands.p && echo "#FLOAT_ISLANDS = --float islands: ok" || echo "#FLOAT_ISLANDS: DIFFERENT"
+cmp -s /tmp/zx81half_int.p /tmp/zx81half_islands.p && echo "--float int, no floating point used = float islands code: ok" || echo "--float int: DIFFERENT"
+mono build/zx81c.exe --? | grep -c -- "--float" | sed 's/^/zx81c --? lines mentioning --float: /'
+mono build/zx81dc.exe --? | grep -c "FULL_FLOAT" | sed 's/^/zx81dc --? lines mentioning #FULL_FLOAT: /'
+if [ -n "$ROM" ]; then
+  echo "-- compiled in full floating point vs the same BASIC in the ZX81 ROM's interpreter"
+  mcs -langversion:5 -nowarn:414,219,168 -out:/tmp/tooltest.exe src/Core/*.cs tests/cs/ToolTest.cs
+  for f in f1 f2 f3 f4 f5; do
+    mono /tmp/tooltest.exe --mkp tests/$f.bas /tmp/zx81basic_$f.p
+    python3 tests/cmpbasic.py tests/$f.p /tmp/zx81basic_$f.p --frames 3000
+  done
+  for f in t1 t10; do
+    mono /tmp/tooltest.exe --mkp tests/$f.bas /tmp/zx81basic_$f.p
+    python3 tests/cmpbasic.py tests/full_$f.p /tmp/zx81basic_$f.p --frames 3000
+  done
+  echo "f6 (INPUT 2.5, 4, -1.2): $(python3 tests/run81.py tests/f6.p --frames 600 --keys "20:2,30:.,40:5,50:NL,70:4,80:NL,200:MINUS,220:1,240:.,260:2,280:NL" --expect tests/expected/f6.txt | tail -1)"
+fi
 echo "== decompiler"
 mcs -langversion:5 -nowarn:414,219,168 -out:/tmp/tooltest.exe src/Core/*.cs tests/cs/ToolTest.cs
 mono /tmp/tooltest.exe tests/t1.p tests/t2.p tests/t3.p tests/t4.p tests/t5.p tests/t5opt.p tests/t6.p \
   tests/t7.p tests/t8.p tests/t9.p tests/t10.p tests/t11.p tests/t12.p examples/fortress.p examples/clock.p
+echo "-- full floating point programs"
+mono /tmp/tooltest.exe tests/f1.p tests/f2.p tests/f3.p tests/f4.p tests/f5.p tests/f6.p tests/full_t1.p tests/full_t2.p \
+  tests/full_t3.p tests/full_t4.p tests/full_t5.p tests/full_t6.p tests/full_t7.p tests/full_t8.p tests/full_t9.p \
+  tests/full_t10.p tests/full_t11.p tests/full_fortress.p tests/full_clock.p
 echo "-- large BASIC files for 32K / 64K packs (saved arrays past 32K; display file above 32K)"
 printf '10 REM BIG\n20 PRINT A(1);" ";A(10)\n30 RAND USR 40000\n' > /tmp/zx81big.txt
 mono /tmp/tooltest.exe --mkp /tmp/zx81big.txt /tmp/zx81bigbase.p

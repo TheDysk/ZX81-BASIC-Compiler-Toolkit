@@ -50,7 +50,8 @@ namespace ZX81Compiler
         public List<Diagnostic> Diagnostics = new List<Diagnostic>();   // errors and warnings
         public int CodeSize, VarsAddress, VarsSize, ProgramLines;       // figures for the summary
         public int Ram = 16;              // RAM the program was compiled for (Options.Ram)
-        public bool StrictInt;            // strict integer mode was on (option or #STRICT_INT)
+        public NumberMode Numbers;        // how numbers were worked out (option or directive)
+        public bool StrictInt { get { return Numbers == NumberMode.IntegerOnly; } }
         public int MemoryEnd;             // first byte after the variables (0 if the layout wasn't reached)
         public bool UsesCalc;             // uses the ROM calculator (extra room after E_LINE)
         /// <summary>Summary shown after a successful compile: several lines (sizes in bytes
@@ -72,11 +73,21 @@ namespace ZX81Compiler
         public static CompileResult Compile(string text, Options opt)
         {
             var res = new CompileResult();
-            // directives: a line #STRICT_INT switches strict integer mode on
+            // directives: a line #FULL_FLOAT, #FLOAT_ISLANDS or #STRICT_INT chooses how
+            // numbers are worked out, whatever the options say (the last one counts)
             opt = opt.Clone();
+            NumberMode chosen = opt.Numbers;
+            string directive = null;
             foreach (string raw in text.Replace("\r", "").Split('\n'))
-                if (raw.Trim().ToUpperInvariant() == "#STRICT_INT") opt.StrictInt = true;
-            res.StrictInt = opt.StrictInt;
+            {
+                var m = NumberModes.Directive(raw);
+                if (m != null) { opt.Numbers = m.Value; directive = raw.Trim().ToUpperInvariant(); }
+            }
+            res.Numbers = opt.Numbers;
+            // (say so when it overrides a choice other than the default)
+            if (directive != null && opt.Numbers != chosen && chosen != NumberMode.FullFloat)
+                res.Diagnostics.Add(new Diagnostic { BasicLine = -1, Message = "the line " + directive + " in the listing sets the numbers to " +
+                    NumberModes.Display[(int)opt.Numbers].ToLowerInvariant() + " (instead of " + NumberModes.Display[(int)chosen].ToLowerInvariant() + ")" });
             var lines = ParseProgram(text, opt, res.Diagnostics);
             res.ProgramLines = lines.Count;
             if (res.Diagnostics.Any(d => d.IsError)) return res;
@@ -139,7 +150,7 @@ namespace ZX81Compiler
             res.PFile = BuildPFile(code, opt.Autorun);
             res.Success = true;
             res.ProgramLines = lines.Count;
-            res.Summary = string.Format("Compiled {0} BASIC lines for a ZX81 with {1}K RAM{2}.", lines.Count, opt.Ram, opt.StrictInt ? ", strict integer mode (no floating point)" : "") + "\n" +
+            res.Summary = string.Format("Compiled {0} BASIC lines for a ZX81 with {1}K RAM; numbers: {2}.", lines.Count, opt.Ram, NumberModes.Describe(opt.Numbers)) + "\n" +
                 SizeLines(res) + "\n" + ".p file: " + Size(res.PFile.Length) + ".";
             return res;
         }
@@ -294,7 +305,7 @@ namespace ZX81Compiler
                     var lex = new Lexer(body, num, opt.LowerIsInverse);
                     var toks = lex.Run();
                     foreach (var w in lex.Warnings) diags.Add(new Diagnostic { BasicLine = num, SourceLine = i + 1, Message = w });
-                    var par = new Parser();
+                    var par = new Parser { FullFloat = opt.FullFloat };
                     // a line number with nothing after it (just the End token) does nothing
                     Stmt st = toks.Count == 1 ? new SimpleStmt("NOP") : par.ParseLine(toks, num);
                     foreach (var w in par.Warnings) diags.Add(new Diagnostic { BasicLine = num, SourceLine = i + 1, Message = w });

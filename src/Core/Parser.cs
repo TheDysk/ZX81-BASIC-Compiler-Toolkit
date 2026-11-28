@@ -33,7 +33,8 @@
 //  Numbers: whole numbers -32768..65535 become NumLit; anything else (0.5, 1.0, 1E6)
 //  becomes FloatLit, which makes the expression around it floating point (see
 //  FloatMath in Ast.cs). Fold works out constant parts at compile time, in whole
-//  numbers or floating point to match how the code would do it.
+//  numbers or floating point to match how the code would do it (always floating
+//  point in full floating point, Options.Numbers).
 // =====================================================================================
 using System;
 using System.Collections.Generic;
@@ -745,14 +746,21 @@ namespace ZX81Compiler
         /// arithmetic like the compiled code (so 7/2 is 3); parts inside a float island
         /// (see FloatMath) use floating point like the ZX81 (so SIN (7/2) is SIN 3.5).
         /// Division by zero is left alone (so it happens at run time).</summary>
-        public static Expr Fold(Expr e) { return Fold(e, false); }
+        public Expr Fold(Expr e) { return Fold(e, false); }
+
+        /// <summary>Full floating point (Options.Numbers): all arithmetic is floating
+        /// point, so constants fold as the ZX81 works them out (7/2 is 3.5).</summary>
+        public bool FullFloat;
 
         static bool IsConst(Expr e) { return e is NumLit || e is FloatLit; }
+        static bool Whole(double v) { return v == Math.Floor(v) && Math.Abs(v) < 4294967296.0; }
 
         /// <summary>Fold e; fl = e is inside a float island.</summary>
-        static Expr Fold(Expr e, bool fl)
+        Expr Fold(Expr e, bool fl)
         {
-            bool here = fl || FloatMath.IsFloat(e);    // is this node worked out in floating point?
+            // is this node worked out in floating point? (in full floating point, every
+            // numeric node is; PEEK, CHR$ ... still want whole-number arguments, below)
+            bool here = fl || FloatMath.IsFloat(e) || (FullFloat && e != null && e.Type == VT.Num);
             var b = e as Binary;
             if (b != null)
             {
@@ -781,6 +789,9 @@ namespace ZX81Compiler
                         default: return e;
                     }
                     if (double.IsInfinity(fv) || double.IsNaN(fv) || Math.Abs(fv) > 1e38) return e;   // leave it for the ROM to report
+                    // full floating point: only fold what is exact (whole numbers in, a whole
+                    // number out), so the result is bit for bit what the ROM would work out
+                    if (FullFloat && !(Whole(x) && Whole(y) && Whole(fv))) return e;
                     var c = FloatMath.Const(fv); c.Line = e.Line; return c;
                 }
                 int xi = (short)l.Value, yi = (short)r.Value, v;   // (short) gives the signed value

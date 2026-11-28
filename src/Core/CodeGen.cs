@@ -31,6 +31,20 @@
 //    rounded into HL (rt_fpop) or turned into text by the ROM's STR$ (rt_fstr). The
 //    rest of the program stays in fast 16-bit whole numbers.
 //
+//  FULL FLOATING POINT (Options.Numbers = FullFloat, the default)
+//  ---------------------------------------------------------------
+//    Every numeric variable, array element and FOR value is a 5-byte ZX81 floating-
+//    point number, and every numeric expression is worked out on the ROM calculator
+//    stack (GenFloat), exactly as the ZX81 interpreter does. Values that must be whole
+//    numbers (PLOT, AT, POKE, GOTO, subscripts ...) are rounded into HL by rt_fpop, as
+//    the ROM does. Only PEEK, CODE, LEN, USR, string comparisons and constants are
+//    worked out in HL and then put on the calculator stack (rt_fpushu).
+//      push a variable / element:  LD HL,V_x / (element address) ; CALL rt_fplit
+//      store:                      LD HL,V_x / (element address) ; CALL rt_fsto
+//      FOR block (17 bytes):       value, limit, step (5 bytes each), loop address
+//    A program compiled this way calls rt_ffull at the start (which is how the
+//    decompiler knows).
+//
 //  LABELS
 //  ------
 //    L_10 / E_10   start / end of BASIC line 10 (an IF that is false jumps to E_n)
@@ -47,6 +61,51 @@ using System.Text;
 
 namespace ZX81Compiler
 {
+    /// <summary>How the compiled program works out numbers (see Options.Numbers).</summary>
+    public enum NumberMode { FullFloat, FloatIslands, IntegerOnly }
+
+    /// <summary>Names of the number modes, for the GUI, the command line and messages.</summary>
+    public static class NumberModes
+    {
+        /// <summary>Names shown in the compiler's "Numbers" box, in NumberMode order.</summary>
+        public static readonly string[] Display = { "Full floating point", "Float islands", "Integer only" };
+        /// <summary>The words for --float (zx81c) in NumberMode order.</summary>
+        public static readonly string[] Words = { "full", "islands", "int" };
+        /// <summary>The directive line for each mode, in NumberMode order.</summary>
+        public static readonly string[] Directives = { "#FULL_FLOAT", "#FLOAT_ISLANDS", "#STRICT_INT" };
+
+        /// <summary>A --float word (full, islands, int; a few other spellings too) as a mode.</summary>
+        public static bool TryParse(string s, out NumberMode m)
+        {
+            switch ((s ?? "").Trim().ToLowerInvariant())
+            {
+                case "full": case "float": case "fullfloat": case "full-float": m = NumberMode.FullFloat; return true;
+                case "islands": case "island": case "float-islands": case "floatislands": m = NumberMode.FloatIslands; return true;
+                case "int": case "integer": case "none": case "strict": case "strict-int": m = NumberMode.IntegerOnly; return true;
+            }
+            m = NumberMode.FullFloat;
+            return false;
+        }
+
+        /// <summary>The mode set by a directive line, or null if the line isn't one.</summary>
+        public static NumberMode? Directive(string line)
+        {
+            int i = Array.IndexOf(Directives, (line ?? "").Trim().ToUpperInvariant());
+            return i < 0 ? (NumberMode?)null : (NumberMode)i;
+        }
+
+        /// <summary>Short description for summaries and reports.</summary>
+        public static string Describe(NumberMode m)
+        {
+            switch (m)
+            {
+                case NumberMode.FloatIslands: return "float islands (whole numbers; floating point only where an expression needs it)";
+                case NumberMode.IntegerOnly: return "integer only (no floating point)";
+                default: return "full floating point (as the ZX81)";
+            }
+        }
+    }
+
     /// <summary>The user's compile options (tick boxes in the GUI / command-line switches).</summary>
     public class Options
     {
@@ -55,11 +114,21 @@ namespace ZX81Compiler
         public bool LowerIsInverse = false;  // lower case letters in strings become inverse video
         public int MaxString = 255;          // capacity of ordinary string variables
         public bool MakeListing = true;      // produce an assembly listing
-        /// <summary>Strict integer mode (#STRICT_INT in the listing, or --strict-int): anything
-        /// that would need the ROM's floating-point calculator (a "float island": SIN, PI,
-        /// 0.5, VAL, RND on its own ...) is a compile error instead of floating point, so a
-        /// program is guaranteed to be all fast whole-number code.</summary>
-        public bool StrictInt;
+        /// <summary>How numbers are worked out (the "Numbers" box in the GUI, --float on the
+        /// command line, or a #FULL_FLOAT / #FLOAT_ISLANDS / #STRICT_INT line in the listing):
+        ///   FullFloat     every number is a 5-byte floating-point number and all arithmetic
+        ///                 is done by the ROM's calculator, exactly as on the ZX81 (7/2 is
+        ///                 3.5, LET X=2.5 keeps 2.5). The default.
+        ///   FloatIslands  numbers are fast 16-bit whole numbers; only expressions that need
+        ///                 it (SIN, PI, 0.5, VAL ...) use the ROM calculator ("float islands"),
+        ///                 and their results are rounded when stored.
+        ///   IntegerOnly   whole numbers only: anything that would need floating point is a
+        ///                 compile error (strict integer mode).</summary>
+        public NumberMode Numbers = NumberMode.FullFloat;
+        /// <summary>Integer only (strict integer mode, #STRICT_INT).</summary>
+        public bool StrictInt { get { return Numbers == NumberMode.IntegerOnly; } }
+        /// <summary>Full floating point.</summary>
+        public bool FullFloat { get { return Numbers == NumberMode.FullFloat; } }
 
         /// <summary>A copy (the compiler may switch options on from directives in the listing).</summary>
         public Options Clone() { return (Options)MemberwiseClone(); }
@@ -105,6 +174,10 @@ namespace ZX81Compiler
         }
 
         // ---- small helpers ----
+        /// <summary>Full floating point (see the top of this file)?</summary>
+        bool full { get { return opt.FullFloat; } }
+        /// <summary>Bytes in a numeric variable or array element: 5 (full floating point) or 2.</summary>
+        int NumSize { get { return full ? 5 : 2; } }
         void Op(string s) { Asm.Op(s); }
         void Lbl(string s) { Asm.Label(s); }
         /// <summary>A new unique label name: _k0, _k1, ...</summary>
@@ -161,8 +234,9 @@ namespace ZX81Compiler
             Op("LD (ENTRYSP),SP");
             Call(opt.Ram > 16 ? "rt_memcheckx" : "rt_memcheck");   // is there room / RAM for the variables?
             Call("rt_init");
-            UsesCalc = prog.Any(ln => StmtUsesCalc(ln.Stmt));
-            if (UsesCalc) Call("rt_finit");   // note where the ROM's calculator stack is
+            UsesCalc = full || prog.Any(ln => StmtUsesCalc(ln.Stmt));
+            if (full) Call("rt_ffull");            // full floating point: rt_finit, and marks the mode
+            else if (UsesCalc) Call("rt_finit");   // note where the ROM's calculator stack is
             Use("rt_stop");
 
             // Each BASIC line. An error in one line is recorded and compilation carries
@@ -220,12 +294,13 @@ namespace ZX81Compiler
             foreach (var v in numVars)
             {
                 Asm.Line("V_" + v + " EQU BSS+" + off);
-                off += forVars.Contains(v) ? 8 : 2;    // FOR vars: value, limit, step, loop address
+                // FOR vars: value, limit, step, loop address
+                off += forVars.Contains(v) ? (full ? 17 : 8) : NumSize;
             }
             foreach (var kv in numArr)
             {
                 Asm.Line("A_" + kv.Key + " EQU BSS+" + off);
-                off += 2 * kv.Value.Aggregate(1, (x, y) => x * y);   // 2 bytes per element
+                off += NumSize * kv.Value.Aggregate(1, (x, y) => x * y);   // 2 or 5 bytes per element
             }
             foreach (var c in strDyn)
             {
@@ -317,14 +392,14 @@ namespace ZX81Compiler
                 UseNumVar(v); forVars.Add(v);
                 if (opt.BreakCheck) Call("rt_brk");
                 Op("LD HL,V_" + v);
-                Call("rt_next");
+                Call(full ? "rt_fnext" : "rt_next");
                 return;
             }
             if (s is DimStmt)
             {
                 // the memory is reserved at compile time; DIM just clears it
                 var d = (DimStmt)s;
-                int size = d.Dims.Aggregate(1, (x, y) => x * y) * (d.IsStr ? 1 : 2);
+                int size = d.Dims.Aggregate(1, (x, y) => x * y) * (d.IsStr ? 1 : NumSize);
                 Op("LD HL," + (d.IsStr ? "SA_" : "A_") + d.Name);
                 Op("LD BC," + size);
                 Call("rt_zero");
@@ -356,6 +431,13 @@ namespace ZX81Compiler
             if (s is RandStmt)
             {
                 var r = (RandStmt)s;
+                if (full)
+                {
+                    // the ZX81's own SEED, so RND gives the same numbers as on a ZX81
+                    if (r.N == null) Op("LD HL,0"); else GenNum(r.N, 0);
+                    Call("rt_frand");
+                    return;
+                }
                 if (r.N == null) Call("rt_randomize");
                 else { GenNum(r.N, 0); Call("rt_rand"); }
                 return;
@@ -400,18 +482,36 @@ namespace ZX81Compiler
         {
             string v = f.Var.ToString();
             UseNumVar(v); forVars.Add(v);
-            WarnIfRounded(f.From, "FOR variable " + v);
-            WarnIfRounded(f.To, "FOR limit (TO)");
-            WarnIfRounded(f.Step, "FOR STEP");
-            GenNum(f.From, 0);
-            Op("LD (V_" + v + "),HL");
-            GenNum(f.To, 0);
-            Op("LD (V_" + v + "+2),HL");
-            if (f.Step == null) Op("LD HL,1"); else GenNum(f.Step, 0);
-            Op("LD (V_" + v + "+4),HL");
             string body = NewLabel();
-            Op("LD HL," + body);
-            Op("LD (V_" + v + "+6),HL");
+            if (full)
+            {
+                // full floating point: a 17-byte block of three 5-byte numbers and the address
+                GenFloat(f.From, 0);
+                Op("LD HL,V_" + v);
+                Call("rt_fsto");
+                GenFloat(f.To, 0);
+                Op("LD HL,V_" + v + "+5");
+                Call("rt_fsto");
+                GenFloat(f.Step ?? new NumLit(1), 0);
+                Op("LD HL,V_" + v + "+10");
+                Call("rt_fsto");
+                Op("LD HL," + body);
+                Op("LD (V_" + v + "+15),HL");
+            }
+            else
+            {
+                WarnIfRounded(f.From, "FOR variable " + v);
+                WarnIfRounded(f.To, "FOR limit (TO)");
+                WarnIfRounded(f.Step, "FOR STEP");
+                GenNum(f.From, 0);
+                Op("LD (V_" + v + "),HL");
+                GenNum(f.To, 0);
+                Op("LD (V_" + v + "+2),HL");
+                if (f.Step == null) Op("LD HL,1"); else GenNum(f.Step, 0);
+                Op("LD (V_" + v + "+4),HL");
+                Op("LD HL," + body);
+                Op("LD (V_" + v + "+6),HL");
+            }
             // find the matching NEXT: the first "NEXT v" after this line (also inside an IF),
             // which is how the ZX81 ROM finds it
             string after = null;
@@ -431,7 +531,7 @@ namespace ZX81Compiler
             }
             // skip the loop if it shouldn't run at all
             Op("LD HL,V_" + v);
-            Call("rt_forchk");
+            Call(full ? "rt_fforchk" : "rt_forchk");
             Op("JP C," + after);
             Lbl(body);
         }
@@ -448,7 +548,7 @@ namespace ZX81Compiler
                 switch (it.Kind)
                 {
                     case PIKind.Expr:
-                        if (it.A.Type == VT.Num && !FloatMath.IsFloat(it.A)) { GenNum(it.A, 0); Call(pre + "prnum"); }
+                        if (it.A.Type == VT.Num && !FloatCtx(it.A)) { GenNum(it.A, 0); Call(pre + "prnum"); }
                         else
                         {
                             Expr se = it.A.Type == VT.Num ? new Func("STR$", it.A, VT.Str) { Line = it.A.Line } : it.A;
@@ -500,6 +600,18 @@ namespace ZX81Compiler
         /// null and the value comes from the keyboard instead).</summary>
         void GenAssign(Expr target, Expr value, bool fromInput)
         {
+            if (target.Type == VT.Num && full)
+            {
+                // full floating point: the value goes on the calculator stack (INPUT: the
+                // ROM's VAL of the text typed), then rt_fsto stores it at the address in HL
+                if (fromInput) { Call("rt_input"); Call("rt_fval"); }
+                else GenFloat(value, 0);
+                var fv = target as NumVar;
+                if (fv != null) { UseNumVar(fv.Name); Op("LD HL,V_" + fv.Name); }
+                else GenArrAddr((NumArr)target, 0);
+                Call("rt_fsto");
+                return;
+            }
             if (target.Type == VT.Num)
             {
                 // INPUT reads a line of text, then rt_val converts it to a number in HL
@@ -574,7 +686,8 @@ namespace ZX81Compiler
         // ---------------- numeric expressions ----------------
         /// <summary>A constant or a plain variable can be loaded straight into a register
         /// without disturbing anything else, which allows shorter code.</summary>
-        static bool IsSimple(Expr e) { return e is NumLit || e is NumVar; }
+        /// (In full floating point a variable holds 5 bytes, so only constants are simple.)
+        bool IsSimple(Expr e) { return e is NumLit || (!full && e is NumVar); }
 
         /// <summary>Load a simple expression into DE.</summary>
         void LoadDE(Expr e)
@@ -613,9 +726,10 @@ namespace ZX81Compiler
         {
             if (e is NumLit) { Op("LD HL," + ((NumLit)e).Value); return; }
             if (e is FloatLit) { Op("LD HL," + RoundConst((FloatLit)e)); return; }
-            if (FloatMath.IsFloat(e))
+            if (FloatCtx(e))
             {
-                // a float island: work it out with the ROM calculator, then round it
+                // a float island (or anything, in full floating point): work it out with
+                // the ROM calculator, then round it
                 GenFloat(e, f);
                 Call("rt_fpop");
                 return;
@@ -702,15 +816,25 @@ namespace ZX81Compiler
             if (e is FloatLit) { Op("LD HL," + Literal(((FloatLit)e).Bytes)); Call("rt_fplit"); return; }
             if (e is PiConst) { Op("LD HL," + Literal(Runtime.PiBytes)); Call("rt_fplit"); return; }
             var n = e as NumLit;
+            if (n != null && full)
+            {
+                // full floating point: every constant as its 5-byte value
+                Op("LD HL," + Literal(ZxFloat.Encode(FloatMath.Value(n))));
+                Call("rt_fplit");
+                return;
+            }
+            if (full && e is NumVar) { var v = (NumVar)e; UseNumVar(v.Name); Op("LD HL,V_" + v.Name); Call("rt_fplit"); return; }
+            if (full && e is NumArr) { GenArrAddr((NumArr)e, f); Call("rt_fplit"); return; }
             if (n != null)
             {
                 if (n.Unsigned) { Op("LD BC," + n.Value); Op("CALL " + Runtime.ROM_STACK_BC); }   // 32768..65535
                 else { Op("LD HL," + n.Value); Call("rt_fpushi"); }
                 return;
             }
-            if (e is RndBare) { Call("rt_frnd"); return; }
+            string rnd = full ? "rt_frndz" : "rt_frnd";    // full floating point: the ZX81's own RND
+            if (e is RndBare) { Call(rnd); return; }
             var rn = e as RndN;
-            if (rn != null) { Call("rt_frnd"); GenFloat(rn.N, f); Calc("*"); return; }   // RND*n with n a float
+            if (rn != null) { Call(rnd); GenFloat(rn.N, f); Calc("*"); return; }   // RND*n with n a float
             var fn = e as Func;
             if (fn != null && fn.Name == "VAL") { GenStrRegion(fn.Arg, f); Call("rt_fval"); return; }
             if (fn != null && (FloatMath.FloatFuncs.Contains(fn.Name) || FloatMath.PassFuncs.Contains(fn.Name)))
@@ -729,8 +853,19 @@ namespace ZX81Compiler
                 Calc(b.Op);
                 return;
             }
+            // worked out in HL: PEEK, CODE, LEN, USR, string comparisons (in full floating
+            // point these are 0..65535), or a whole-number part of a float island
             GenNum(e, f);
-            Call("rt_fpushi");
+            Call(full ? "rt_fpushu" : "rt_fpushi");
+        }
+
+        /// <summary>Is e worked out on the ROM calculator? In full floating point, every
+        /// numeric expression except the few that are whole numbers by nature (constants,
+        /// PEEK, CODE, LEN, USR, string comparisons); otherwise only float islands.</summary>
+        bool FloatCtx(Expr e)
+        {
+            if (!full) return FloatMath.IsFloat(e);
+            return e != null && e.Type == VT.Num && !FloatMath.WholeByNature(e);
         }
 
         /// <summary>One ROM calculator operation on the top of the calculator stack.</summary>
@@ -755,7 +890,7 @@ namespace ZX81Compiler
                 return (int)((long)r & 0xFFFF);
             }
             if (r != c.Value && opt.StrictInt)
-                throw Err("the number " + txt + " is not a whole number (strict integer mode, #STRICT_INT, is on)");
+                throw Err("the number " + txt + " is not a whole number, but the numbers are set to integer only (strict integer mode: #STRICT_INT, --float int)");
             if (r != c.Value)
                 Diags.Add(new Diagnostic { BasicLine = curLine, Message = "number " + txt + " is not a whole number; a whole number is needed here, so it becomes " + r });
             return (int)r & 0xFFFF;
@@ -767,14 +902,14 @@ namespace ZX81Compiler
         /// warns about those itself).</summary>
         void WarnIfRounded(Expr value, string what)
         {
-            if (value == null || !FloatMath.IsFloat(value) || value is FloatLit) return;
+            if (full || value == null || !FloatMath.IsFloat(value) || value is FloatLit) return;
             var fn = value as Func;
             if (fn != null && (fn.Name == "INT" || fn.Name == "SGN")) return;
             var b = value as Binary;
             if (b != null && (CmpRt.ContainsKey(b.Op) || b.Op == "AND" || b.Op == "OR")) return;
             if (value is Unary && ((Unary)value).Op == "NOT") return;
             Diags.Add(new Diagnostic { BasicLine = curLine, Message = what + " holds whole numbers, so the floating-point value " +
-                BasicWriter.Expr(value) + " is rounded. To keep the fraction, use the expression where it is needed (e.g. COS (" +
+                BasicWriter.Expr(value) + " is rounded (float islands). To keep fractions, choose full floating point (Numbers box, --float full), or use the expression where it is needed (e.g. COS (" +
                 BasicWriter.Expr(value) + ")) instead of storing it." });
         }
 
@@ -787,10 +922,10 @@ namespace ZX81Compiler
         {
             if (s is PrintStmt)
                 foreach (var it in ((PrintStmt)s).Items) { it.A = Norm(it.A, it.Kind == PIKind.Expr); it.B = Norm(it.B, false); }
-            else if (s is LetStmt) { var l = (LetStmt)s; l.Target = Norm(l.Target, false); l.Value = Norm(l.Value, false); }
+            else if (s is LetStmt) { var l = (LetStmt)s; l.Target = Norm(l.Target, false); l.Value = Norm(l.Value, full && l.Target.Type == VT.Num); }
             else if (s is IfStmt) { var f = (IfStmt)s; f.Cond = Norm(f.Cond, true); NormStmt(f.Then); }   // IF 0.5 is true
             else if (s is GotoStmt) ((GotoStmt)s).Target = Norm(((GotoStmt)s).Target, false);
-            else if (s is ForStmt) { var f = (ForStmt)s; f.From = Norm(f.From, false); f.To = Norm(f.To, false); f.Step = Norm(f.Step, false); }
+            else if (s is ForStmt) { var f = (ForStmt)s; f.From = Norm(f.From, full); f.To = Norm(f.To, full); f.Step = Norm(f.Step, full); }
             else if (s is InputStmt) ((InputStmt)s).Target = Norm(((InputStmt)s).Target, false);
             else if (s is PokeStmt) { var p = (PokeStmt)s; p.Addr = Norm(p.Addr, false); p.Value = Norm(p.Value, false); }
             else if (s is PlotStmt) { var p = (PlotStmt)s; p.X = Norm(p.X, false); p.Y = Norm(p.Y, false); }
@@ -807,13 +942,16 @@ namespace ZX81Compiler
             var c = e as FloatLit;
             if (c != null)
             {
-                if (fl) return e;
+                // in full floating point a whole number like 34.0 is just 34 (the same code
+                // either way); in float islands it keeps the island floating point
+                bool wholeConst = c.Value == Math.Floor(c.Value) && c.Value >= -32768 && c.Value <= 65535;
+                if (fl && !(full && wholeConst)) return e;
                 var n = new NumLit(RoundConst(c)) { Line = e.Line };
                 n.Unsigned = n.Value > 32767 && c.Value > 0;
                 return n;
             }
             // which children are worked out in floating point (see GenFloat)?
-            bool kids = FloatMath.IsFloat(e);
+            bool kids = FloatCtx(e);
             var b = e as Binary;
             if (b != null)
             {
@@ -847,7 +985,7 @@ namespace ZX81Compiler
             {
                 string why = FloatCause(e);
                 if (why != null)
-                    throw Err(why + " needs floating point (the ROM calculator), but strict integer mode (#STRICT_INT) is on");
+                    throw Err(why + " needs floating point (the ROM calculator), but the numbers are set to integer only (strict integer mode: #STRICT_INT, --float int)");
             }
         }
 
@@ -923,7 +1061,7 @@ namespace ZX81Compiler
                 case "INT": GenNum(fn.Arg, f); return;           // values are already whole numbers
                 case "PEEK": GenNum(fn.Arg, f); Op("LD L,(HL)"); Op("LD H,0"); return;
                 // USR: call the machine code; like the ZX81, the result is whatever is in BC
-                case "USR": GenNum(fn.Arg, f); Call("rt_usr"); Op("LD H,B"); Op("LD L,C"); return;
+                case "USR": GenNum(fn.Arg, f); Call(full ? "rt_usrb" : "rt_usr"); Op("LD H,B"); Op("LD L,C"); return;
                 case "CODE": GenStrRegion(fn.Arg, f); Call("rt_code"); return;
                 case "LEN": GenStrRegion(fn.Arg, f); Op("LD L,C"); Op("LD H,0"); return;   // length is in C
             }
@@ -951,7 +1089,8 @@ namespace ZX81Compiler
                 Op("POP DE");
                 Op("ADD HL,DE");
             }
-            Op("ADD HL,HL");
+            if (full) Call("rt_mul5");          // 5-byte elements
+            else Op("ADD HL,HL");               // 2-byte elements
             Op("LD DE,A_" + a.Name);
             Op("ADD HL,DE");
         }
@@ -983,7 +1122,7 @@ namespace ZX81Compiler
                     GenJumpIfFalse(b.R, label);
                     return;
                 }
-                if (CmpRt.ContainsKey(b.Op) && !FloatMath.IsFloat(b))
+                if (!full && CmpRt.ContainsKey(b.Op) && !FloatMath.IsFloat(b))
                 {
                     // X=0 / X<>0: just test whether HL is zero
                     var rl = b.R as NumLit;
@@ -1021,7 +1160,7 @@ namespace ZX81Compiler
                 }
             }
             // anything else: work out the value and test for zero
-            if (FloatMath.IsFloat(c))
+            if (FloatCtx(c))
             {
                 // floating point: true means not zero (0.3 is true), so test NOT c, which is 1 or 0
                 GenFloat(c, 0);
@@ -1108,7 +1247,7 @@ namespace ZX81Compiler
             if (b != null && b.Op == "AND")
             {
                 string skip = NewLabel();
-                if (FloatMath.IsFloat(b.R))
+                if (FloatCtx(b.R))
                 {
                     // floating-point condition: any value but 0 counts (test NOT n)
                     GenFloat(b.R, f);
@@ -1136,7 +1275,7 @@ namespace ZX81Compiler
                 Call("rt_appchr");
                 return;
             }
-            if (fn != null && fn.Name == "STR$" && FloatMath.IsFloat(fn.Arg))
+            if (fn != null && fn.Name == "STR$" && FloatCtx(fn.Arg))
             {
                 // floating point: the ROM makes the text, exactly as the ZX81 prints it
                 GenFloat(fn.Arg, f);

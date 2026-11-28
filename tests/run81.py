@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run a compiled ZX81 .p on a Z80 emulator and print the screen.
-usage: run81.py file.p [--keys "frame:char,frame:char,..."] [--frames N] [--break F] [--snap f1,f2]
+usage: run81.py file.p [--basic] [--keys "frame:char,frame:char,..."] [--frames N] [--break F] [--snap f1,f2]
                        [--rom zx81.rom | --stub] [--expect saved.txt] [--ramtop ADDR] [--hw16 | --hw32]
 --expect compares the screen, printer output and events with a saved run (tests/expected).
 --ramtop ADDR (hex, e.g. C000) sets RAMTOP and puts the stack just below it, as after
@@ -9,6 +9,8 @@ POKE RAMTOP + NEW on a machine with a 32K/64K RAM pack (default 8000).
 ROM (writes are lost) and C000h-FFFFh is the same memory as 4000h-7FFFh. That is enough
 to test the start-up RAM check of programs compiled for 32K/64K. --hw32 is a 32K pack:
 RAM up to BFFFh, with C000h-FFFFh the same memory as 4000h-7FFFh.
+--basic runs the program as BASIC in the ROM's own interpreter (needs the real ROM) instead
+of calling the machine code at 16514, e.g. to compare a compiled program with the original.
 Keys: char is a ZX81 key char (A-Z 0-9 space), NL = newline, RUB = rubout. Each press lasts 5 frames.
 
 ROM: with the real ZX81 ROM (--rom file, or tests/zx81.rom, or $ZX81_ROM) the ROM's own
@@ -55,7 +57,7 @@ def find_rom(path=None):
     return None
 
 def run(pfile, keys=(), frames=3000, quiet=False, breakframe=None, snaps=(), rom=None, stub=False, expect=None,
-        ramtop=0x8000, hw16=False, hw32=False):
+        ramtop=0x8000, hw16=False, hw32=False, basic=False):
     data = open(pfile, 'rb').read()
     m = z80.Z80Machine()
     mem = m.memory
@@ -83,6 +85,17 @@ def run(pfile, keys=(), frames=3000, quiet=False, breakframe=None, snaps=(), rom
     w16(ramtop - 0x12, 0x3FF8)                  # return address of RAND USR
     m.sp = ramtop - 0x12
     m.pc = 16514
+    if basic:
+        # run the program as BASIC, in the ROM's interpreter (from its first line), to
+        # compare with the compiled version: enter the ROM where it starts the next line
+        # (the loop at 066Ch: HL = the next line, DE = the text of this one, PPC = its number)
+        mem[0x4000] = 0xFF                      # ERR_NR: no error
+        mem[0x4001] = 0x80                      # FLAGS
+        first = 0x407D
+        mem[0x4007] = mem[first + 1]; mem[0x4008] = mem[first]
+        m.de = first + 4
+        m.hl = first + 4 + r16(first + 2)
+        m.pc = 0x066C
     if hw16 or hw32:
         # plain 16K machine (or 32K): step one instruction at a time and fix the memory up after each
         if hw16: m.set_memory_block(0x8000, bytes(romimg))
@@ -98,6 +111,7 @@ def run(pfile, keys=(), frames=3000, quiet=False, breakframe=None, snaps=(), rom
     traps = {}
     if realrom:
         for a in (0x0008, 0x0871, 0x0869, 0x02FB, 0x0343, 0x03C3): m.set_breakpoint(a)
+        if basic: m.set_breakpoint(0x06AE)     # the interpreter ran off the end of the program
     printer = []; events = []
     space = [False]
     m.set_input_callback(lambda port: 0xFE if space[0] and (port >> 8) == 0x7F else 0xFF)
@@ -132,6 +146,7 @@ def run(pfile, keys=(), frames=3000, quiet=False, breakframe=None, snaps=(), rom
             budget = m.ticks_to_stop if m.pc in (0x0008, 0x0871, 0x0869, 0x02FB, 0x0343, 0x03C3) and realrom else 0
             pc = m.pc
             if 0x3FF8 <= pc <= 0x3FF9: finished = True
+            elif basic and pc == 0x06AE: finished = True
             elif not realrom: pass
             elif pc == 0x0008:
                 code = mem[r16(m.sp)]
@@ -156,6 +171,8 @@ def run(pfile, keys=(), frames=3000, quiet=False, breakframe=None, snaps=(), rom
         fr = (fr - 1) & 0xFFFF
         mem[0x4034] = fr & 0xFF; mem[0x4035] = fr >> 8
         frame += 1
+    global last_events, last_printer
+    last_events = list(events); last_printer = list(printer)
     bad = bytes(mem[0:0x3F00]) != romcopy
     dfile = mem[0x400C] | mem[0x400D] << 8
     rows = []
@@ -195,6 +212,8 @@ if __name__ == '__main__':
         i = args.index('--frames'); frames = int(args[i + 1]); del args[i:i + 2]
     if '--break' in args:
         i = args.index('--break'); brk = int(args[i + 1]); del args[i:i + 2]
+    basic = '--basic' in args
+    if basic: args.remove('--basic')
     snaps = ()
     if '--snap' in args:
         i = args.index('--snap'); snaps = [int(x) for x in args[i + 1].split(',')]; del args[i:i + 2]
@@ -212,4 +231,4 @@ if __name__ == '__main__':
     expect = None
     if '--expect' in args:
         i = args.index('--expect'); expect = args[i + 1]; del args[i:i + 2]
-    run(args[0], keys, frames, breakframe=brk, snaps=snaps, rom=rom, stub=stub, expect=expect, ramtop=ramtop, hw16=hw16, hw32=hw32)
+    run(args[0], keys, frames, breakframe=brk, snaps=snaps, rom=rom, stub=stub, expect=expect, ramtop=ramtop, hw16=hw16, hw32=hw32, basic=basic)

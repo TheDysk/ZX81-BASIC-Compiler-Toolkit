@@ -29,6 +29,45 @@ namespace ZX81Compiler
 {
     public static class Cli
     {
+        /// <summary>zx81c --? (also -?, /?, -h, --help): the options, one line each.</summary>
+        public static string HelpText
+        {
+            get
+            {
+                return "zx81c - ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler) + "\n" +
+@"Usage: zx81c input [output.p] [options]
+
+  input            a BASIC listing (.txt .bas .b81), or a program or tape (.p .81 .p81
+                   .o .80 .wav .tzx), whose BASIC is compiled (for a program made by
+                   this compiler, the BASIC rebuilt from its machine code)
+  output.p         the .p file to write (default: the input's name with .p)
+
+Numbers (also chosen by a #FULL_FLOAT, #FLOAT_ISLANDS or #STRICT_INT line in the listing):
+  --float full     full floating point, as the ZX81 (the default): every number is a
+                   5-byte floating-point number, 7/2 is 3.5, LET X=2.5 keeps 2.5
+  --float islands  float islands: fast whole numbers (-32768..32767); only expressions
+                   with SIN, PI, 0.5, VAL ... use floating point, rounded when stored
+  --float int      integer only: floating point is a compile error
+  --strict-int     the same as --float int
+
+Other options:
+  --ram 16|32|64   RAM the program is for: 16K (default), or a 32K or 64K RAM pack
+  --no-autorun     don't start the program by itself after LOAD
+  --no-break       don't check for BREAK (SPACE) at GOTO and NEXT (a little faster)
+  --lower-inverse  lower-case letters in strings become inverse video
+  --maxstr N       capacity of ordinary string variables, 1-255 (default 255)
+  --asm file       also write the generated Z80 assembly listing
+  --run            start the emulator set up in " + ToolConfig.FileName + @" with the new .p file
+  --emulator path  start this emulator instead (for this run only; implies --run)
+  --version        show the version
+  --?              show this list (also -?, /?, -h, --help)
+
+Exit codes: 0 done, 1 the program has errors, 2 bad arguments or the input can't be
+read, 3 compiled but the emulator couldn't be started.
+";
+            }
+        }
+
         /// <summary>Run the compiler with command-line arguments, writing messages to outw.</summary>
         public static int Run(string[] args, TextWriter outw)
         {
@@ -51,29 +90,33 @@ namespace ZX81Compiler
                         if (opt.Ram != 16 && opt.Ram != 32 && opt.Ram != 64) { outw.WriteLine("--ram must be 16, 32 or 64"); return 1; }
                         break;
                     case "--asm": asmFile = args[++i]; break;
-                    case "--strict-int": opt.StrictInt = true; break;          // like #STRICT_INT in the listing
+                    case "--float":                                            // how numbers are worked out
+                        {
+                            NumberMode m;
+                            string w = i + 1 < args.Length ? args[++i] : "";
+                            if (!NumberModes.TryParse(w, out m)) { outw.WriteLine("--float must be full, islands or int (not '" + w + "'). Use --? for help."); return 2; }
+                            opt.Numbers = m;
+                            break;
+                        }
+                    case "--strict-int": opt.Numbers = NumberMode.IntegerOnly; break;   // the same as --float int
                     case "--run": run = true; break;                           // start the emulator afterwards
                     case "--emulator": emulator = args[++i]; run = true; break; // ... this one (not saved)
                     case "--version":
                         outw.WriteLine("zx81c - ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler));
                         return 0;
+                    case "--?":
+                    case "-?":
+                    case "/?":
                     case "-h":
                     case "--help":
-                    case "/?":
-                        outw.WriteLine("zx81c - ZX81 BASIC Compiler " + Versions.Show(Versions.Compiler));
-                        outw.WriteLine("Usage: zx81c input.txt [output.p] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--strict-int] [--asm listing.asm] [--run] [--emulator path]");
-                        outw.WriteLine("  input.txt can also be a program or tape (.p .81 .p81 .o .80 .wav .tzx): its BASIC is");
-                        outw.WriteLine("  compiled (for a program made by this compiler, the BASIC rebuilt from its code).");
-                        outw.WriteLine("  --strict-int   no floating point: SIN, PI, 0.5, VAL ... are errors (same as a #STRICT_INT line)");
-                        outw.WriteLine("  --run          start the emulator set up in " + ToolConfig.FileName + " with the new .p file");
-                        outw.WriteLine("  --emulator P   start emulator P instead (for this run only)");
+                        outw.Write(HelpText);
                         return 0;
                     default:
                         if (input == null) input = a; else output = a;
                         break;
                 }
             }
-            if (input == null) { outw.WriteLine("No input file. Use --help for usage."); return 2; }
+            if (input == null) { outw.WriteLine("No input file. Use --? for a list of the options."); return 2; }
             if (output == null) output = Path.ChangeExtension(input, ".p");   // default: same name, .p
             string text;
             try { text = ReadListing(input); }

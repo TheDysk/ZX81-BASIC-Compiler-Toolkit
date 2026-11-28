@@ -1,3 +1,5 @@
+# Written for speed: whole-number arithmetic, with floating point only where needed
+#FLOAT_ISLANDS
 10 REM FIND THE FORTRESS - COMPILER DEMO
 20 CLS
 30 PRINT AT 0,0;"\00\00\2d\85\17\17\17\2b\2e\33\29\00\39\2d\2a\00\2b\34\37\39\37\2a\38\38\17\17\17\17\05\2d"

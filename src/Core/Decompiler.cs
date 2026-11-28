@@ -93,7 +93,8 @@ namespace ZX81Compiler
                 sb.AppendLine("# Variable names are not stored in machine code, so they have been renamed.");
                 sb.AppendLine("# Compile with: Max string length " + r.Recovered.Options.MaxString +
                     ", BREAK check " + (r.Recovered.Options.BreakCheck ? "on" : "off") + ", auto-run " + (r.Recovered.Options.Autorun ? "on" : "off") +
-                    ", RAM " + r.Recovered.Options.Ram + "K");
+                    ", RAM " + r.Recovered.Options.Ram + "K, numbers: " + NumberModes.Display[(int)r.Recovered.Options.Numbers].ToLowerInvariant() +
+                    " (the " + NumberModes.Directives[(int)r.Recovered.Options.Numbers] + " line below sets it)");
                 foreach (var n in r.Recovered.Notes) sb.AppendLine("# " + n);
             }
             else
@@ -144,6 +145,9 @@ namespace ZX81Compiler
                 foreach (var n in r.Recovered.Notes) sb.AppendLine("  " + n);
                 if (r.Recovered.Success)
                     sb.AppendLine("  Options detected: max string length " + r.Recovered.Options.MaxString + ", BREAK check " + (r.Recovered.Options.BreakCheck ? "on" : "off") + ", RAM " + r.Recovered.Options.Ram + "K" + (r.Recovered.Options.Ram > 16 ? " (variables at " + Z80Disasm.Hex(r.Recovered.BssStart, 4) + " and up)" : ""));
+                if (r.Recovered.Success)
+                    sb.AppendLine("  Numbers: " + NumberModes.Describe(r.Recovered.Options.Numbers) +
+                        (r.Recovered.Options.Numbers == NumberMode.FloatIslands ? " - or integer only, which makes the same code when no floating point is used" : ""));
                 sb.AppendLine();
             }
             if (r.EscapedLines > 0)

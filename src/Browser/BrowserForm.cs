@@ -281,7 +281,7 @@ Open a .p, .81 or .p81 file, a tape (a .wav recording of a ZX81 tape, 8 to 32-bi
 If a recording can't be read, a message gives the time in it, as [minutes:seconds.milliseconds], where it went wrong: where the signal was lost, a bit that couldn't be read, or where the recording ends in the middle of the program. If a tape holds several programs, the first is opened and the others are listed.
 
 # The tabs
-Overview :: The auto-run status (whether the program starts by itself after LOAD, and at which line), the system variables 4009h-407Ch with their values in plain English, and a memory map. RAMTOP isn't saved in a .p file, so choose the machine (1K to 16K, or a 32K or 64K RAM pack) the map is drawn for. Warnings show anything a real ZX81 can't do with the file.
+Overview :: The auto-run status (whether the program starts by itself after LOAD, and at which line), the system variables 4009h-407Ch with their values in plain English, and a memory map. RAMTOP isn't saved in a .p file, so choose the machine (1K to 16K, or a 32K or 64K RAM pack) the map is drawn for. Warnings show anything a real ZX81 can't do with the file. For a program made by the ZX81 BASIC Compiler it also says where its variables go while it runs and how it works out numbers: full floating point (5-byte numbers, as the ZX81) or float islands (2-byte whole numbers).
 BASIC listing :: The program with ZX81 characters: keywords, inverse video and block graphics. Machine code in REM lines can be shown as Z80 instructions.
 Screen :: The saved display file, drawn as the ZX81 shows it, at a choice of sizes.
 Variables :: Every variable saved with the program: numbers, strings, arrays and FOR loops.

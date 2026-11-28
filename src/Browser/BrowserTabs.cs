@@ -74,6 +74,9 @@ namespace ZX81Compiler
                 int ramK = rec.Options.Ram;
                 needs = "RAM needed: " + ramK + "K. Made by the ZX81 BASIC Compiler for " + ramK + "K: its variables use " + rec.BssStart.ToString("X4") + "h-" +
                     (rec.BssStart + rec.BssSize - 1).ToString("X4") + "h while it runs" + (ramK > 16 ? " (above 32K; it shows NEEDS " + ramK + "K RAM if that RAM isn't there)." : " (after the file).");
+                if (rec.Success)
+                    needs += " Numbers: " + NumberModes.Describe(rec.Options.Numbers) +
+                        (rec.Options.Numbers == NumberMode.FullFloat ? " - each numeric variable is 5 bytes." : " - each numeric variable is 2 bytes.");
             }
             foreach (var e in ca.Entries) if (!e.InFile && e.Address >= 0x4000) { needs += " Calls machine code at " + e.Address + " outside the file."; break; }
             facts.AppendLine(needs);

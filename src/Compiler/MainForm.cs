@@ -45,7 +45,7 @@ namespace ZX81Compiler
         readonly CheckBox chkAutorun, chkBreak, chkLower, chkAsm;   // the compile options
         readonly NumericUpDown numMaxStr;                      // Options.MaxString
         readonly ComboBox cbRam;                               // Options.Ram: 16K, 32K or 64K
-        readonly CheckBox chkStrict;                           // Options.StrictInt
+        readonly ComboBox cbNumbers;                           // Options.Numbers: full floating point, float islands, integer only
         readonly ToolStripStatusLabel status;                  // status bar text
         // ---- state ----
         string listingPath;   // file the listing was loaded from / saved to (null = never saved)
@@ -59,7 +59,7 @@ namespace ZX81Compiler
             // Wide enough for the whole options row; never bigger than the screen. If the
             // window is made narrower, the options wrap onto a second row instead of vanishing.
             var work = Screen.PrimaryScreen.WorkingArea;
-            Width = Math.Min(1280, work.Width); Height = Math.Min(760, work.Height);
+            Width = Math.Min(1360, work.Width); Height = Math.Min(760, work.Height);
             MinimumSize = new Size(640, 420);
             StartPosition = FormStartPosition.CenterScreen;
             AllowDrop = true;    // files can be dragged onto the window
@@ -109,7 +109,10 @@ namespace ZX81Compiler
             chkBreak = new CheckBox { Text = "BREAK (SPACE) stops program", Checked = true, AutoSize = true };
             chkLower = new CheckBox { Text = "Lower case in strings = inverse", Checked = false, AutoSize = true };
             chkAsm = new CheckBox { Text = "Also save .asm listing", Checked = false, AutoSize = true };
-            chkStrict = new CheckBox { Text = "Strict integer", Checked = false, AutoSize = true };
+            var lblNum = new Label { Text = "Numbers:", AutoSize = true, Padding = new Padding(0, 4, 0, 0) };
+            cbNumbers = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 150 };
+            cbNumbers.Items.AddRange(NumberModes.Display);    // in NumberMode order
+            cbNumbers.SelectedIndex = (int)NumberMode.FullFloat;
             var lbl = new Label { Text = "Max string length:", AutoSize = true, Padding = new Padding(10, 4, 0, 0) };
             numMaxStr = new NumericUpDown { Minimum = 1, Maximum = 255, Value = 255, Width = 55 };
             var lblRam = new Label { Text = "RAM:", AutoSize = true, Padding = new Padding(10, 4, 0, 0) };
@@ -120,10 +123,17 @@ namespace ZX81Compiler
             tips.SetToolTip(chkAutorun, "The program starts by itself when loaded (via line 10 RAND USR 16514).");
             tips.SetToolTip(chkBreak, "Checks the BREAK key on every GOTO and NEXT, like ZX81 BASIC. Untick for games that use SPACE.");
             tips.SetToolTip(chkLower, "If ticked, lower case letters inside \"strings\" become inverse video letters.");
-            tips.SetToolTip(chkStrict, "No floating point: SIN, PI, numbers like 0.5, VAL and RND on its own become errors, so the program is all fast whole-number code. A line #STRICT_INT in the listing does the same.");
+            string numTip = "How numbers are worked out:\n" +
+                "Full floating point (default): exactly as the ZX81 - 7/2 is 3.5, variables keep fractions. Slower.\n" +
+                "Float islands: fast whole numbers; only expressions with SIN, PI, 0.5, VAL ... use floating point, and the results are rounded when stored.\n" +
+                "Integer only: whole numbers only; anything that needs floating point is an error.\n" +
+                "A #FULL_FLOAT, #FLOAT_ISLANDS or #STRICT_INT line in the listing overrides this.";
+            tips.SetToolTip(cbNumbers, numTip);
+            tips.SetToolTip(lblNum, numTip);
+            tips.AutoPopDelay = 30000;
             tips.SetToolTip(numMaxStr, "Room reserved for each ordinary string variable (A$..Z$). Lower it if you run out of memory.");
             tips.SetToolTip(cbRam, "The RAM pack the program is for. With 32K or 64K the variables go above 32K (8000h), giving 16K or 32K for variables, arrays and strings. The code itself must still fit below 32K.");
-            foreach (Control c in new Control[] { chkAutorun, chkBreak, chkLower, chkAsm, chkStrict, lbl, numMaxStr, lblRam, cbRam })
+            foreach (Control c in new Control[] { lblNum, cbNumbers, chkAutorun, chkBreak, chkLower, chkAsm, lbl, numMaxStr, lblRam, cbRam })
             {
                 c.Margin = new Padding(4, 0, 12, 4);
                 opts.Controls.Add(c);
@@ -226,6 +236,12 @@ namespace ZX81Compiler
                 finally { Cursor = Cursors.Default; }
                 // A Windows TextBox needs \r\n line endings; files may have just \n
                 editor.Text = text.Replace("\r\n", "\n").Replace("\n", "\r\n");
+                // a #FULL_FLOAT / #FLOAT_ISLANDS / #STRICT_INT line decides the numbers: show it
+                foreach (var l in text.Split('\n'))
+                {
+                    var m = NumberModes.Directive(l);
+                    if (m != null) cbNumbers.SelectedIndex = (int)m.Value;
+                }
                 listingPath = program ? null : path;   // Save asks for a name for a listing made from a program
                 outputPath = null;
                 dirty = program;
@@ -278,7 +294,7 @@ namespace ZX81Compiler
                 MaxString = (int)numMaxStr.Value,
                 MakeListing = chkAsm.Checked,
                 Ram = 16 << cbRam.SelectedIndex,         // 16, 32, 64
-                StrictInt = chkStrict.Checked
+                Numbers = (NumberMode)cbNumbers.SelectedIndex
             };
         }
 
@@ -426,18 +442,18 @@ LET (optional), PRINT (with ; , AT y,x and TAB n), IF ... THEN followed by a sta
 ABS SGN INT SQR PEEK USR CODE LEN VAL CHR$ STR$ INKEY$ RND PI SIN COS TAN ASN ACS ATN LN EXP; NOT AND OR; comparisons = <> < > <= >= on numbers and strings; + - * / **.
 String slicing works: A$(2), A$(2 TO 5), A$( TO 3), A$(4 TO ).
 
-# Whole numbers and floating point
-Numbers are normally whole numbers from -32768 to 32767, which is what makes compiled programs fast.
-An expression that uses SIN COS TAN ASN ACS ATN LN EXP SQR PI VAL, RND on its own, or a number with a decimal point (0.5, 1.0) is worked out in floating point by the ZX81 ROM's own calculator, exactly as the ZX81 would, e.g.
+# Numbers: three ways to work them out
+Choose how the compiled program works out numbers in the Numbers box on the options bar (or with --float on the command line, or with a line of its own in the listing). Full floating point is the default.
+Full floating point :: Exactly as the ZX81 does it. Every number is a 5-byte floating-point number and all arithmetic is done by the ZX81 ROM's own calculator, so 7/2 is 3.5, LET X=2.5 keeps 2.5, FOR I=0 TO 1 STEP 0.1 works, and RND gives the same numbers as a ZX81 after the same RAND. Slower: arithmetic runs at about the speed of the ZX81's BASIC, though everything else (PRINT, GOTO, strings, the loop itself) is still compiled machine code. Numeric variables take 5 bytes and arrays 5 bytes per element. Choose it with the Numbers box, --float full, or a #FULL_FLOAT line.
+Float islands :: Fast. Numbers are whole numbers from -32768 to 32767, worked out directly by the Z80, which makes programs many times faster. Only an expression that uses SIN COS TAN ASN ACS ATN LN EXP SQR PI VAL, RND on its own, or a number with a decimal point (0.5, 1.0) is worked out by the ROM calculator, as an ""island"" of floating point; where its result is stored or used as a number, it is rounded to a whole number. Choose it with the Numbers box, --float islands, or a #FLOAT_ISLANDS line.
+Integer only :: Whole numbers only, and anything that would need floating point is a compile error, so the program is guaranteed to be all fast code. This is the same thing as strict integer mode. Choose it with the Numbers box, --float int (or --strict-int), or a #STRICT_INT line.
+A #FULL_FLOAT, #FLOAT_ISLANDS or #STRICT_INT line anywhere in the listing overrides the Numbers box, and opening a listing that has one sets the box to match. The decompiler puts one at the top of the BASIC it rebuilds, so it compiles the same way again.
+An example of a float island:
     PLOT 32+20*COS (A*PI/180),22+20*SIN (A*PI/180)
-- Where the result is used as a number (stored in a variable, used by PLOT or AT, a subscript ...) it is rounded to the nearest whole number, as the ZX81 does when it needs a whole number.
+- In both floating-point modes, values that must be whole numbers (PLOT, AT, TAB, POKE, GOTO, array subscripts, CHR$ ...) are rounded to the nearest whole number, as the ZX81 does.
 - PRINT and STR$ show the full value: PRINT SIN 1 shows 0.84147099.
-- Floating point is as slow as the ZX81 itself, so keep it out of the busiest loops.
-- Errors in floating point (SQR -1, LN 0 ...) stop the program with the ZX81 report code, e.g. A/10.
+- Errors in floating point (SQR -1, LN 0, 1/0 ...) stop the program with the ZX81 report code, e.g. A/10.
 - VAL works out any expression in its string, but can't see the program's variables.
-
-# Strict integer mode
-Put #STRICT_INT on a line of its own (or tick Strict integer, or use --strict-int on the command line) to forbid floating point. Every expression that would need the ROM calculator, and every number that isn't whole, is then a compile error, so the program is guaranteed to be all fast code.
 
 # Compile & Run
 Build > Compile & Run (Ctrl+F5, or --run on the command line) saves the .p file and starts an emulator with it. Set the emulator up with Options > Configure Emulator...: the program to run and its arguments, where {file} is replaced by the .p file. The settings are kept in ZX81Toolset.ini next to the programs (or in %APPDATA%\ZX81Toolset).
@@ -452,9 +468,7 @@ Choose the RAM the program is for in the RAM box (or --ram 16|32|64).
 The machine code and the screen stay below 32K, because a ZX81 can only run code and show the display there, so the code itself can't grow beyond about 15K. RAMTOP can be left alone, or raised (the variables then sit below the stack). When the program starts it checks that the RAM is really there, and shows NEEDS 32K RAM (or 64K) if not.
 
 # Differences from ZX81 BASIC
-- Outside floating point, maths is whole-number: 7/2 = 3 and 2**-1 = 0. Write 7/2.0 (or 7/2*1.0) to get 3.5.
-- Variables hold whole numbers, so LET X=2.5 stores 3.
-- RND*n gives a fast whole number from 0 to n-1, so the usual INT (RND*6)+1 works as expected. RND on its own is 0 to 0.99998.
+- With float islands or integer only, maths outside floating point is whole-number: 7/2 = 3 and 2**-1 = 0 (write 7/2.0 to get 3.5), variables hold whole numbers (LET X=2.5 stores 3), and RND*n gives a fast whole number from 0 to n-1, so the usual INT (RND*6)+1 works as expected. Full floating point has none of these differences.
 - Variables start at 0 (no 'variable not found' error).
 - DIM sizes must be constant numbers. Arrays are not bounds checked.
 - Ordinary string variables hold up to 'Max string length' characters (default 255). DIM A$(n) gives a fixed-length string and DIM A$(n,m) an array of n strings of m characters, as on the ZX81.

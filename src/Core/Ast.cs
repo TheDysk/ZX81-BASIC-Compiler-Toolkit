@@ -338,6 +338,18 @@ namespace ZX81Compiler
             return false;
         }
 
+        /// <summary>In full floating point, the numeric expressions that are still worked out
+        /// as whole numbers in HL (then put on the calculator stack): constants, PEEK, CODE,
+        /// LEN, USR and string comparisons. Everything else uses the ROM calculator.</summary>
+        public static bool WholeByNature(Expr e)
+        {
+            if (e is NumLit) return true;
+            var f = e as Func;
+            if (f != null && (f.Name == "PEEK" || f.Name == "CODE" || f.Name == "LEN" || f.Name == "USR")) return true;
+            var b = e as Binary;
+            return b != null && b.Op.StartsWith("S");
+        }
+
         /// <summary>The constant node for a value: a NumLit for whole numbers -32768..65535
         /// (Unsigned for 32768 and up), otherwise a FloatLit.</summary>
         public static Expr Const(double v)

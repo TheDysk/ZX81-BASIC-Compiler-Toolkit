@@ -214,6 +214,7 @@ The BASIC exactly as it is stored in the file. Anything that can't be written as
 # BASIC rebuilt from machine code
 Only for programs made by the ZX81 BASIC Compiler. The decompiler reads the compiled machine code back into BASIC statements. Variable names aren't stored in machine code, so the variables are renamed A, B, C ... If the report says 'Verified', compiling the rebuilt BASIC gives exactly the same machine code.
 The RAM the program was compiled for (16K, 32K or 64K) is detected too, and shown in the report and at the top of the rebuilt BASIC.
+So is how the program works out numbers: full floating point (5-byte numbers and the ROM calculator for all arithmetic, as the ZX81; the compiler's default) or float islands (fast whole numbers, with floating point only where an expression needs it). Integer only makes the same code as float islands. Both are read back into BASIC, and the rebuilt BASIC starts with a #FULL_FLOAT or #FLOAT_ISLANDS line so that it compiles the same way whatever the compiler's Numbers box is set to.
 Everything the compiler supports is recognised, including floating point (SIN, PI, 0.5 ...), LPRINT, COPY, SAVE, LOAD and NEW. Lines that compile to nothing (REM, LIST, LLIST, CONT) can only come back as REM, and only when the program had a line table (computed GOTO / GOSUB); otherwise the lines are renumbered 10, 20, 30 ...
 Ordinary machine code (written by hand or by other tools) can't be turned back into BASIC. It is shown in the Machine code tab instead.
 

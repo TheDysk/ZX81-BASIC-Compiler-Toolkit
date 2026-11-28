@@ -193,6 +193,9 @@ namespace ZX81Compiler
             // variables at 8000h and up: compiled for a 32K or 64K RAM pack
             res.Options.Ram = bss >= 0x8000 ? (bss + bssSize > 0xC000 ? 64 : 32) : 16;
             res.Options.Autorun = p.AutoRunLine != null;
+            // full floating point programs start with rt_ffull (5-byte numbers everywhere)
+            full = rtAt.ContainsValue("rt_ffull");
+            res.Options.Numbers = full ? NumberMode.FullFloat : NumberMode.FloatIslands;
             PreScan();
             Interpret();
             NameVariables();
@@ -202,6 +205,15 @@ namespace ZX81Compiler
 
         int runtimeEnd;
         int curAddr;   // address being interpreted (for error messages)
+        bool full;     // compiled in full floating point (5-byte numbers, see CodeGen)
+        /// <summary>Offsets of the limit, step and loop address in a FOR block.</summary>
+        int ForLimit { get { return full ? 5 : 2; } }
+        int ForStep { get { return full ? 10 : 4; } }
+        int ForBody { get { return full ? 15 : 6; } }
+        /// <summary>Bytes per numeric array element.</summary>
+        int ElemSize { get { return full ? 5 : 2; } }
+        /// <summary>Was this numeric expression worked out by the ROM calculator?</summary>
+        bool OnCalc(Expr e) { return full ? e != null && e.Type == VT.Num && !FloatMath.WholeByNature(e) : FloatMath.IsFloat(e); }
         const int PastEnd = 0x10000;   // AddrRef target meaning "a line number after the last line"
 
         void SetRuntime(List<KeyValuePair<int, Template>> found)
@@ -256,7 +268,8 @@ namespace ZX81Compiler
                 }
                 if (x.Shape == "LD HL,nn" && InBss(x.Value))
                 {
-                    if (IsCallTo(i + 1, "rt_next") || IsCallTo(i + 1, "rt_forchk")) forBlocks.Add(x.Value);
+                    if (IsCallTo(i + 1, "rt_next") || IsCallTo(i + 1, "rt_forchk") || IsCallTo(i + 1, "rt_fnext") || IsCallTo(i + 1, "rt_fforchk")) forBlocks.Add(x.Value);
+                    else if (IsCallTo(i + 1, "rt_fplit") || IsCallTo(i + 1, "rt_fsto")) numVars.Add(x.Value);   // full floating point
                     else if (Is(i + 1, "LD (HL),n") && At(i + 1).Value == 0) temps.Add(x.Value);
                     else if (Is(i + 1, "LD BC,nn") && IsCallTo(i + 2, "rt_zero")) dims[x.Value] = At(i + 1).Value;
                     else if (Is(i + 1, "LD BC,nn")) strFixed.Add(x.Value);
@@ -267,7 +280,7 @@ namespace ZX81Compiler
                     // a string array element is followed by LD BC,length; check that first, because
                     // its subscript may also end in ADD HL,HL (multiplying by a power of two)
                     if (Is(i + 1, "ADD HL,DE") && Is(i + 2, "LD BC,nn")) strArr2[x.Value] = At(i + 2).Value;
-                    else if (Is(i - 1, "ADD HL,HL") && Is(i + 1, "ADD HL,DE")) numArrBase.Add(x.Value);
+                    else if ((Is(i - 1, "ADD HL,HL") || IsCallTo(i - 1, "rt_mul5")) && Is(i + 1, "ADD HL,DE")) numArrBase.Add(x.Value);
                     else if (Is(i + 1, "LD A,n") && IsCallTo(i + 2, "rt_strset")) { strDyn.Add(x.Value); res.Options.MaxString = At(i + 1).Value; }
                 }
             }
@@ -285,8 +298,8 @@ namespace ZX81Compiler
             // capacity of ordinary strings, from the spacing of two of them
             if (strDyn.Count >= 2) { var l = strDyn.ToList(); res.Options.MaxString = l[1] - l[0] - 1; }
             foreach (var f in forBlocks) numVars.Add(f);
-            // FOR blocks also cover value+2..+6: those aren't separate variables
-            foreach (var f in forBlocks) { numVars.Remove(f + 2); numVars.Remove(f + 4); numVars.Remove(f + 6); }
+            // FOR blocks also cover the limit, step and loop address: those aren't separate variables
+            foreach (var f in forBlocks) { numVars.Remove(f + ForLimit); numVars.Remove(f + ForStep); numVars.Remove(f + ForBody); }
         }
 
         // ------------------------------------------------------------------
@@ -309,6 +322,11 @@ namespace ZX81Compiler
         // RST 28h sequence (by address).
         readonly List<Expr> fstack = new List<Expr>();
         readonly Dictionary<int, List<int>> calcOps = new Dictionary<int, List<int>>();
+        /// <summary>STR$ made by the ROM calculator (PRINT of a floating-point number is
+        /// compiled as its STR$; those are shown as just the number again).</summary>
+        readonly HashSet<Expr> fromCalc = new HashSet<Expr>();
+        /// <summary>On the calculator stack: the number typed at INPUT (full floating point).</summary>
+        class InputMark : Expr { public InputMark() { Type = VT.Num; } }
         Expr FPop()
         {
             if (fstack.Count == 0) throw Fail("calculator stack underflow");
@@ -328,7 +346,7 @@ namespace ZX81Compiler
                     fstack.Add(new Binary(op, l, r, VT.Num));
                 }
                 else if (op == "NEG" || op == "NOT") fstack.Add(new Unary(op, FPop()));
-                else if (op == "STR$") fstack.Add(new Func("STR$", FPop(), VT.Str));
+                else if (op == "STR$") { var sf = new Func("STR$", FPop(), VT.Str); fromCalc.Add(sf); fstack.Add(sf); }
                 else if (op == "VAL") throw Fail("unexpected calculator VAL");
                 else fstack.Add(new Func(op, FPop(), VT.Num));
             }
@@ -398,7 +416,7 @@ namespace ZX81Compiler
             if (print == null) { print = new PrintStmt { Printer = printer }; printStart = lineStart; }
             // a floating-point number is printed as its STR$: show just the number
             var fs = it.A as Func;
-            if (it.Kind == PIKind.Expr && fs != null && fs.Name == "STR$" && FloatMath.IsFloat(fs.Arg)) it.A = fs.Arg;
+            if (it.Kind == PIKind.Expr && fs != null && fs.Name == "STR$" && fromCalc.Contains(fs)) it.A = fs.Arg;
             print.Items.Add(it);
             printEnd = end;
         }
@@ -618,7 +636,7 @@ namespace ZX81Compiler
                         }
                         // floating-point truth test: NOT x, then jump if that is not zero
                         var notf = HL is SN ? ((SN)HL).E as Unary : null;
-                        bool floatTest = !z && notf != null && notf.Op == "NOT" && FloatMath.IsFloat(notf.A);
+                        bool floatTest = !z && notf != null && notf.Op == "NOT" && OnCalc(notf.A);
                         if (floatTest && builds.Count > 0)
                         {
                             var b = builds[builds.Count - 1];      // A$ AND (floating-point condition)
@@ -677,9 +695,9 @@ namespace ZX81Compiler
                 case "LD (nn),HL":
                     {
                         int v = x.Value;
-                        if (forVar >= 0 && forStage == 1 && v == forVar + 2) { forTo = Num(HL); forStage = 2; return next; }
-                        if (forVar >= 0 && forStage == 2 && v == forVar + 4) { forStep = Num(HL); forStage = 3; return next; }
-                        if (forVar >= 0 && forStage == 3 && v == forVar + 6) { forBody = ((SK)HL).V; forStage = 4; return next; }
+                        if (forVar >= 0 && forStage == 1 && v == forVar + ForLimit) { forTo = Num(HL); forStage = 2; return next; }
+                        if (forVar >= 0 && forStage == 2 && v == forVar + ForStep) { forStep = Num(HL); forStage = 3; return next; }
+                        if (forVar >= 0 && forStage == 3 && v == forVar + ForBody) { forBody = ((SK)HL).V; forStage = 4; return next; }
                         if (forVar >= 0 && forStage == 4) throw Fail("FOR pattern broken");
                         if (HL is SInput) { Emit(new InputStmt { Target = VarRef(v) }, x.Addr + x.Len); return next; }
                         if (forBlocks.Contains(v))
@@ -792,6 +810,7 @@ namespace ZX81Compiler
                     }
                     throw Fail("unexpected rt_scmp");
                 case "rt_usr":
+                case "rt_usrb":
                     if (Is(i + 1, "LD H,B") && Is(i + 2, "LD L,C")) { HL = new SN(new Func("USR", Unsigned(Num(HL)), VT.Num)); return i + 3; }
                     throw Fail("unexpected USR");
                 case "rt_code": HL = new SN(new Func("CODE", Str(HL), VT.Num)); break;
@@ -870,18 +889,66 @@ namespace ZX81Compiler
                 case "rt_brk": brkPending = true; break;
                 // ---- floating point ----
                 case "rt_finit": lineStart = end; break;        // start-up code
+                case "rt_ffull": lineStart = end; break;        // start-up code (full floating point)
+                // ---- full floating point ----
+                case "rt_fpushu": fstack.Add(Num(HL)); break;
+                case "rt_mul5": HL = new SN(new Binary("*", Num(HL), new NumLit(5), VT.Num)); break;
+                case "rt_frndz": fstack.Add(new RndBare()); break;
+                case "rt_frand":
+                    {
+                        var n0 = Num(HL) as NumLit;
+                        Emit(n0 != null && n0.Value == 0 ? new RandStmt() : new RandStmt { N = Unsigned(Num(HL)) }, end);
+                        break;
+                    }
+                case "rt_fsto":
+                    {
+                        Expr val = FPop();
+                        var arr = HL as SArr;
+                        if (arr != null)
+                        {
+                            if (val is InputMark) Emit(new InputStmt { Target = arr.E }, end);
+                            else Emit(new LetStmt { Target = arr.E, Value = val }, end);
+                            break;
+                        }
+                        var k = HL as SK;
+                        if (k == null) throw Fail("variable address expected");
+                        int v = k.V;
+                        if (forVar >= 0 && forStage == 1 && v == forVar + ForLimit) { forTo = val; forStage = 2; break; }
+                        if (forVar >= 0 && forStage == 2 && v == forVar + ForStep) { forStep = val; forStage = 3; break; }
+                        if (forVar >= 0 && forStage >= 2) throw Fail("FOR pattern broken");
+                        if (val is InputMark) { Emit(new InputStmt { Target = VarRef(v) }, end); break; }
+                        if (forBlocks.Contains(v))
+                        {
+                            // the start of a FOR (or a LET of a FOR variable: see FlushFor)
+                            FlushFor();
+                            ClosePrint();
+                            forVar = v; forStage = 1; forFrom = val; forStart = lineStart; forStore = end;
+                            break;
+                        }
+                        Emit(new LetStmt { Target = VarRef(v), Value = val }, end);
+                        break;
+                    }
                 case "rt_fpushi": fstack.Add(Num(HL)); break;
                 case "rt_fplit":
                     {
+                        // a variable or array element (full floating point), or a constant
+                        if (HL is SArr) { fstack.Add(((SArr)HL).E); break; }
                         var k = HL as SK;
                         if (k == null) throw Fail("floating-point constant expected");
+                        if (InBss(k.V)) { fstack.Add(VarRef(k.V)); break; }
                         var b = new byte[5];
                         Array.Copy(p.Mem, k.V, b, 0, 5);
-                        fstack.Add(b.SequenceEqual(Runtime.PiBytes) ? (Expr)new PiConst() : new FloatLit(b));
+                        if (b.SequenceEqual(Runtime.PiBytes)) { fstack.Add(new PiConst()); break; }
+                        // full floating point stores whole-number constants this way too
+                        double fv = ZxFloat.Decode(b, 0);
+                        bool whole = full && fv == Math.Floor(fv) && fv >= -32768 && fv <= 65535 && ZxFloat.Encode(fv).SequenceEqual(b);
+                        fstack.Add(whole ? FloatMath.Const(fv) : new FloatLit(b));
                         break;
                     }
                 case "rt_frnd": fstack.Add(new RndBare()); break;
-                case "rt_fval": fstack.Add(new Func("VAL", Str(HL), VT.Num)); break;
+                case "rt_fval":
+                    if (HL is SR && ((SR)HL).S == null) { fstack.Add(new InputMark()); break; }   // INPUT (full floating point)
+                    fstack.Add(new Func("VAL", Str(HL), VT.Num)); break;
                 case "rt_fpop": HL = new SN(FPop()); break;
                 case "rt_fstr":
                     {
@@ -904,6 +971,7 @@ namespace ZX81Compiler
                 case "rt_goto":
                     Emit(new GotoStmt { Sub = true, Target = Num(HL) }, end); break;
                 case "rt_next":
+                case "rt_fnext":
                     {
                         var k = HL as SK;
                         if (k == null) throw Fail("NEXT without a variable");
@@ -912,6 +980,7 @@ namespace ZX81Compiler
                         break;
                     }
                 case "rt_forchk":
+                case "rt_fforchk":
                     {
                         if (forVar < 0 || forStage != 4 || !Is(i + 1, "JP C,nn")) throw Fail("FOR pattern broken");
                         int v = forVar; forVar = -1;
@@ -967,7 +1036,7 @@ namespace ZX81Compiler
         NumArr ArrayElement(int baseAddr, Expr offset)
         {
             var b = offset as Binary;
-            if (b == null || b.Op != "*" || !(b.R is NumLit) || ((NumLit)b.R).Value != 2) throw Fail("array address not recognised");
+            if (b == null || b.Op != "*" || !(b.R is NumLit) || ((NumLit)b.R).Value != ElemSize) throw Fail("array address not recognised");
             Expr inner = b.L;
             var add = inner as Binary;
             if (add != null && add.Op == "+")
@@ -1032,7 +1101,7 @@ namespace ZX81Compiler
         {
             string s;
             if (numNames.TryGetValue(a, out s)) return s;
-            if (numNames.TryGetValue(a - 2, out s)) return s;
+            if (!full && numNames.TryGetValue(a - 2, out s)) return s;
             throw Fail("unknown variable at " + Z80Disasm.Hex(a, 4));
         }
 
@@ -1091,7 +1160,7 @@ namespace ZX81Compiler
                 int baseA = d.Dims[0], size = d.Dims[1];
                 if (arrNames.ContainsKey(baseA))
                 {
-                    int cols; var dl = arr2Cols.TryGetValue(baseA, out cols) ? new List<int> { size / 2 / cols, cols } : new List<int> { size / 2 };
+                    int cols; var dl = arr2Cols.TryGetValue(baseA, out cols) ? new List<int> { size / ElemSize / cols, cols } : new List<int> { size / ElemSize };
                     return new DimStmt { Name = arrNames[baseA], IsStr = false, Dims = dl };
                 }
                 char c = strFinal[StrName(baseA)];
@@ -1168,7 +1237,9 @@ namespace ZX81Compiler
             else
                 for (int k = 0; k < fixedStmts.Count; k++) sb.Append(numbers[k]).Append(' ').Append(BasicWriter.Stmt(fixedStmts[k].Value)).Append("\r\n");
             if (needEnd) sb.Append(endNum).Append(" REM end\r\n");
-            res.Listing = sb.ToString();
+            // how numbers are worked out: a directive, so the listing compiles the same way
+            // whatever the compiler is set to
+            res.Listing = NumberModes.Directives[(int)res.Options.Numbers] + "\r\n" + sb.ToString();
             res.Success = true;
             BasicWriter.LineOf = a => a;
         }
@@ -1206,7 +1277,7 @@ namespace ZX81Compiler
         // ------------------------------------------------------------------
         void Verify()
         {
-            var cr = Compiler.Compile(res.Listing, new Options { Autorun = res.Options.Autorun, BreakCheck = res.Options.BreakCheck, MaxString = res.Options.MaxString, Ram = res.Options.Ram, MakeListing = false });
+            var cr = Compiler.Compile(res.Listing, new Options { Autorun = res.Options.Autorun, BreakCheck = res.Options.BreakCheck, MaxString = res.Options.MaxString, Ram = res.Options.Ram, Numbers = res.Options.Numbers, MakeListing = false });
             if (!cr.Success)
             {
                 res.Notes.Add("The rebuilt BASIC doesn't compile: " + string.Join("; ", cr.Diagnostics.Where(d => d.IsError).Select(d => d.ToString()).Take(3)));
