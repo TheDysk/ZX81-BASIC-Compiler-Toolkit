@@ -507,29 +507,44 @@ rt_usrb:
             // ---------------- random numbers ----------------
             C("rt_rnd16", "", @"
 rt_rnd16:               ; xorshift16, HL = next random
-; A 16-bit xorshift generator (shifts 7, 9, 8): goes through all 65535 non-zero
-; values before repeating. The seed must not be 0.
+; George Marsaglia's xorshift method on 16 bits (shifts 7, 9, 8):
+;   x ^= x << 7;  x ^= x >> 9;  x ^= x << 8
+; It goes through all 65535 non-zero values before repeating. The seed must not be 0.
     LD HL,(SEED)
     LD A,H
     OR L
     JR NZ,r16_go
     INC L                   ; seed 0 would stay 0: use 1
 r16_go:
-    LD A,H
-    RRA
+    PUSH BC
+    PUSH DE                 ; only HL (and A) change
+    ; x ^= x << 7: the low byte gets bit 0 of L in bit 7,
+    ; the high byte gets L >> 1 and bit 0 of H in bit 7
     LD A,L
-    RRA
+    RRCA
+    LD B,A                  ; B = L rotated right
+    AND 80h
+    XOR L
+    LD C,A                  ; C = new low byte
+    LD A,H
+    RRCA
+    AND 80h                 ; (H and 1) << 7
+    LD D,A
+    LD A,B
+    AND 7Fh                 ; L >> 1
+    OR D
     XOR H
     LD H,A
-    LD A,L
-    RRA
-    LD A,H
-    RRA
-    XOR L
+    ; x ^= x >> 9: the low byte gets H >> 1
+    SRL A
+    XOR C
     LD L,A
+    ; x ^= x << 8: the high byte gets the low byte
     XOR H
     LD H,A
     LD (SEED),HL
+    POP DE
+    POP BC
     RET
 ");
             C("rt_rndn", "rt_rnd16 rt_mulhi neg_hl", @"
@@ -734,25 +749,69 @@ rt_mul5:
     RET
 ");
             C("rt_frndz", "", @"
-; RND in full floating point, worked out as the ZX81 does, from its SEED (4032h):
-; seed = (75 * (seed + 1)) mod 65537 - 1, and RND = seed / 65536. So RAND n then RND
-; gives the same numbers as on a real ZX81.
+; RND in full floating point. The same generator as the ZX81 (a Lehmer
+; generator, multiplier 75, modulus 65537) so RAND n then RND gives the same
+; numbers, but worked out here with 24-bit integer arithmetic:
+;   n = seed + 1;  seed = (75 * n) mod 65537 - 1;  RND = seed / 65536
+; Since 65536 = -1 (mod 65537), 75n mod 65537 = low 16 bits - high byte.
 rt_frndz:
-    LD BC,(4032h)           ; SEED
-    CALL 1520h              ; ROM STACK-BC
-    RST 28h
-    DB 0A1h,0Fh             ; stk-one, add: seed + 1
-    DB 30h,37h,16h          ; stk-data 75
-    DB 04h                  ; multiply
-    DB 30h,80h,41h,00h,00h,80h  ; stk-data 65537
-    DB 2Eh,02h              ; n-mod-m, delete (keep the remainder)
-    DB 0A1h,03h,2Dh,34h     ; stk-one, subtract, duplicate, end-calc
-    CALL 158Ah              ; ROM FP-TO-BC: one copy is the new seed...
+    LD HL,(4032h)           ; SEED
+    INC HL                  ; n = seed + 1
+    LD A,H
+    OR L
+    JR NZ,rz_mul
+    LD BC,65461             ; n = 65536 = -1: 75n mod 65537 - 1 = 65461
+    JR rz_save
+rz_mul:
+    LD D,H
+    LD E,L
+    XOR A
+    LD B,A                  ; B:DE = n (shifted to make 2n, 8n, 64n)
+                            ; A:HL = running total, starts at n
+    SLA E
+    RL D
+    RL B                    ; 2n
+    ADD HL,DE
+    ADC A,B                 ; 3n
+    SLA E
+    RL D
+    RL B
+    SLA E
+    RL D
+    RL B                    ; 8n
+    ADD HL,DE
+    ADC A,B                 ; 11n
+    SLA E
+    RL D
+    RL B
+    SLA E
+    RL D
+    RL B
+    SLA E
+    RL D
+    RL B                    ; 64n
+    ADD HL,DE
+    ADC A,B                 ; A:HL = 75n
+    LD E,A
+    LD D,0
+    OR A
+    SBC HL,DE               ; low - high
+    JR NC,rz_pos
+    INC HL                  ; below zero: add 65537
+rz_pos:
+    DEC HL                  ; the new seed
+    LD B,H
+    LD C,L
+rz_save:
     LD (4032h),BC
-    LD A,(HL)               ; ...the other (HL = its exponent) becomes seed / 65536
-    AND A
+    CALL 1520h              ; ROM STACK-BC: put the seed on the calculator stack
+    LD HL,(401Ch)           ; STKEND
+    LD DE,-5
+    ADD HL,DE               ; HL = its exponent byte
+    LD A,(HL)
+    OR A
     RET Z                   ; 0 stays 0
-    SUB 10h
+    SUB 16                  ; divide by 65536
     LD (HL),A
     RET
 ");
