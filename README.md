@@ -487,8 +487,13 @@ examples/        fortress.txt (small game), clock.txt (floating point), feature_
 build.sh         build with Mono
 build.bat        build on Windows
 .github/workflows/release.yml   builds, tests and publishes a release for a v* tag
+ROADMAP.md       enhancements being considered
 LICENSE          MIT licence
 ```
+
+## Future enhancements
+
+Ideas being considered for later versions, such as inline assembly, debugging inside the compiler and reading other tools' listing formats, are listed in [ROADMAP.md](ROADMAP.md). Suggestions are welcome via [GitHub Issues](../../issues).
 
 ## Acknowledgements and trademarks
 
