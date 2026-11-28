@@ -51,6 +51,21 @@ def dump(mem, title):
 
 REPORTS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 
+def screen_rows(mem, dfile):
+    """The 24 screen lines and whether the display file is sound. Handles a full display
+    (24 x 32 characters + 76h) and a collapsed one (each line only as long as its text,
+    as a 1K/2K ZX81 keeps it): each line runs up to its 76h, at most 32 characters."""
+    rows, ok = [], mem[dfile] == 0x76
+    a = dfile + 1
+    for r in range(24):
+        line = []
+        while mem[a] != 0x76 and len(line) < 33:
+            line.append(show(mem[a])); a += 1
+        if len(line) > 32: ok = False; line = line[:32]
+        rows.append(''.join(line).ljust(32))
+        a += 1
+    return rows, ok
+
 def find_rom(path=None):
     for p in (path, os.environ.get('ZX81_ROM'), os.path.join(os.path.dirname(os.path.abspath(__file__)), 'zx81.rom')):
         if p and os.path.exists(p): return open(p, 'rb').read()
@@ -175,12 +190,7 @@ def run(pfile, keys=(), frames=3000, quiet=False, breakframe=None, snaps=(), rom
     last_events = list(events); last_printer = list(printer)
     bad = bytes(mem[0:0x3F00]) != romcopy
     dfile = mem[0x400C] | mem[0x400D] << 8
-    rows = []
-    ok_layout = mem[dfile] == 0x76
-    for r in range(24):
-        base = dfile + 1 + r * 33
-        rows.append(''.join(show(mem[base + c]) for c in range(32)))
-        if mem[base + 32] != 0x76: ok_layout = False
+    rows, ok_layout = screen_rows(mem, dfile)
     out = ['+' + '-' * 32 + '+'] + ['|' + r + '|' for r in rows] + ['+' + '-' * 32 + '+']
     if printer: out += ['printer:'] + [':' + r + ':' for r in printer]
     out += ['event: ' + e for e in events]

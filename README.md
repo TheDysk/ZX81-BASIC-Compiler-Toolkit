@@ -61,6 +61,7 @@ The environment variable `ZX81TOOLSET_INI` can point at another settings file.
 - **Labels instead of line numbers:** write `@loop:` and `GOTO @loop`, and leave the numbers out (see [Labels](#labels-instead-of-line-numbers)). **Tools → Renumber Lines** and **Tools → Convert Labels to Line Numbers** tidy a listing up.
 - **Character palette** (**Tools → Character Palette**, F8, or the **Characters** button): every ZX81 character, block graphic and inverse character; click one to type its escape at the cursor.
 - Programs can be compiled for a 16K, 32K or 64K RAM pack. With 32K or 64K, the variables, arrays and strings use the RAM above 32K (see [RAM packs](#ram-packs-16k-32k-and-64k)).
+- **BASIC only output** (the **Output** box, `--basic-only` or a `#BASIC_ONLY` line): instead of compiling, put the listing into the `.p` file as ordinary ZX81 BASIC, run by the ZX81 itself, for any ZX81 from 1K up (see [BASIC only](#basic-only-output-not-compiled)).
 
 ### Using the compiler
 
@@ -85,7 +86,7 @@ In every program's Open dialog, the file type list starts with all the types tha
 Command line:
 
 ```
-zx81c listing.txt [output.p] [--float full|islands|int] [--labels] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 16|32|64] [--asm listing.asm] [--run] [--emulator path]
+zx81c listing.txt [output.p] [--float full|islands|int] [--labels] [--basic-only] [--no-autorun] [--no-break] [--lower-inverse] [--maxstr N] [--ram 1|2|16|32|64] [--asm listing.asm] [--run] [--emulator path]
 ```
 
 | Option | Meaning |
@@ -94,11 +95,12 @@ zx81c listing.txt [output.p] [--float full|islands|int] [--labels] [--no-autorun
 | `--float islands` | Float islands: fast whole numbers, floating point only where an expression needs it |
 | `--float int` | Integer only: floating point is a compile error. `--strict-int` means the same. |
 | `--labels` | Lines may leave out their numbers, and `@name:` labels them (see [Labels](#labels-instead-of-line-numbers)). Also switched on by a `#LABELS` line or any `@name:` in the listing. |
+| `--basic-only` | Don't compile: write the listing as ordinary ZX81 BASIC (see [BASIC only](#basic-only-output-not-compiled)). Also chosen by a `#BASIC_ONLY` line in the listing. In the GUI this is the **Output** box. |
 | `--no-autorun` | Don't start automatically after LOAD (type `RUN`) |
 | `--no-break` | Don't stop the program when SPACE (BREAK) is pressed. Use this for games that use SPACE. |
 | `--lower-inverse` | Lower-case letters inside strings become inverse video |
 | `--maxstr N` | Capacity of ordinary string variables, 1–255 (default 255). Lower it if memory runs out. |
-| `--ram 16\|32\|64` | The RAM pack the program is for (default 16). See [RAM packs](#ram-packs-16k-32k-and-64k). In the GUI this is the **RAM** box. |
+| `--ram 16\|32\|64` | The RAM pack the program is for (default 16). See [RAM packs](#ram-packs-16k-32k-and-64k). In the GUI this is the **RAM** box. With `--basic-only` it can also be `1` or `2`, for a ZX81 without a RAM pack. |
 | `--asm file` | Also write the generated assembly listing |
 | `--run` | After a successful compile, start the emulator set up in `ZX81Toolset.ini` with the `.p` file. Exit code 3 if it can't be started. |
 | `--emulator path` | Start this emulator instead (implies `--run`; not saved) |
@@ -146,7 +148,7 @@ RETURN
 - `@name:` defines a label, on a line of its own (it labels the next line) or in front of a statement. Names are letters, digits and `_`, and are not case sensitive.
 - `@name` anywhere else in a statement, outside strings, becomes that line's number. It works after `GOTO`/`GO TO`, `GOSUB`/`GO SUB`, `IF … THEN`, `RUN` and `LIST`, and in expressions (`GOTO @table+N*10`).
 - **Mixed numbering:** lines without a number get one, 10 more than the line before (10 for the first). Explicit numbers are kept (`9000 @beep:` above). If unnumbered lines would run into the next explicit number, they are spaced out evenly in between.
-- Labels are used when the listing has an `@name:`, a line `#LABELS`, or with `--labels`. Then unnumbered lines are numbered even without any labels.
+- Labels are used when the listing has an `@name:`, a `GOTO @name` (or `GO SUB`, `THEN`, `RUN`, `LIST`), a line `#LABELS`, or with `--labels`. Then unnumbered lines are numbered even without any labels.
 - Errors name the text line they are on: a label that isn't defined, one defined twice (with the line of the first one), no room to number lines between two explicit numbers, or numbers past 9999.
 
 **Tools → Convert Labels to Line Numbers** replaces the labels with the numbers, giving an ordinary listing. **Tools → Renumber Lines** asks for the first number and the step, and renumbers the whole listing (numbering a labelled one first). `GOTO`, `GO SUB`, `THEN`, `RUN`, `LIST` and `LLIST` followed by a line number are changed to match; a number with no line of its own goes to the next line after it, as on the ZX81. A calculated target such as `GOTO 100+N` can't be changed, so each one gets a warning to check it.
@@ -222,6 +224,24 @@ ERROR  Line 40: the number 2.5 is not a whole number, but the numbers are set to
 
 - A maths error such as `SQR -1` or `LN 0` stops the program with the ZX81 report code (`A/10`: the program runs from line 10).
 - `VAL` works out any expression in its string, e.g. `VAL "2*3.5"` is 7. It can't see the program's variables, because those are kept outside BASIC.
+
+### BASIC only output (not compiled)
+
+Sometimes you just want to get a listing written on the PC into a ZX81 or an emulator as ordinary BASIC, without compiling it. Choose **BASIC only (not compiled)** in the **Output** box, use `zx81c --basic-only`, or put a line `#BASIC_ONLY` in the listing. The listing then goes into the `.p` file exactly as if it had been typed in on a ZX81, and the ZX81's own BASIC runs it. It can be `LIST`ed, edited and `SAVE`d on the ZX81 like any other program.
+
+```
+zx81c --basic-only game.txt game.p             # for a 16K ZX81
+zx81c --basic-only --ram 1 game.txt game.p     # for a ZX81 without a RAM pack
+```
+
+- **Labels and missing line numbers** are filled in, and the compiler's own `#` lines are left out. Lines without numbers are numbered even if the listing has no labels (when compiling, that needs labels switched on).
+- **Every line is checked** before the file is written, with the same clickable messages. Only the ZX81's own rules apply, not the compiler's: `DIM A(N)` (a size worked out when the program runs) and arrays of three or more dimensions are fine.
+- **Put right automatically, each with a warning**, because the compiler accepts them but a ZX81 doesn't: an assignment without `LET` (`X=1` becomes `LET X=1`), and `THEN` followed by a line number (`IF A THEN 100` becomes `IF A THEN GOTO 100`).
+- **Numbers** are always full floating point, as the ZX81's BASIC has no other kind, so the **Numbers** box, BREAK, max string length and `.asm` options are greyed out. A `#FLOAT_ISLANDS` or `#STRICT_INT` line gets a warning that it has no effect. **Lower case in strings = inverse** still applies.
+- **Auto-run after LOAD** starts the program at its first line; turn it off (`--no-autorun`) to load it and wait for `RUN`.
+- **RAM:** the **RAM** box can also be 1K or 2K. The screen is then saved collapsed, as a ZX81 without a RAM pack keeps it, rather than taking 793 of its bytes. The program, the screen and at least the arrays with constant sizes and the other variables are checked to fit, with a warning when there's little room left. Ordinary BASIC only uses the first 16K, so 32K and 64K give it no more room.
+
+The .P Toolkit does the same with **File → Import BASIC Listing** (see [below](#the-p-toolkit)), and can then save the program as a `.wav` or `.tzx` tape to load into a real ZX81.
 
 ### RAM packs: 16K, 32K and 64K
 
@@ -325,7 +345,11 @@ Limits:
 
 ## The .P Toolkit
 
-Open a `.p` file (Ctrl+O, or drag it onto the window), or a tape or other format (see [below](#tapes-p81-and-zx80-files)). If a `.wav` can't be read, a message says what went wrong and when in the recording, as `[mm:ss.ms]`. The tabs:
+Open a `.p` file (Ctrl+O, or drag it onto the window), or a tape or other format (see [below](#tapes-p81-and-zx80-files)). If a `.wav` can't be read, a message says what went wrong and when in the recording, as `[mm:ss.ms]`.
+
+**File → Import BASIC Listing** (Ctrl+I, the **Import listing** button, or opening or dropping a `.txt`, `.bas` or `.b81` file) turns a text listing into a `.p` file of ordinary ZX81 BASIC, not compiled. It is the same code as the compiler's [BASIC only output](#basic-only-output-not-compiled): labels and missing line numbers are filled in, every line is checked (any errors are listed and nothing is made), and `LET` and `THEN GOTO` are put in where the ZX81 needs them. You choose the RAM of the ZX81 it is for (1K, 2K, or 16K or more), whether it runs by itself after LOAD, and whether lower case in strings becomes inverse video. The program then shows in the tabs like any other: save it with **File → Save as .p**, make a tape with **Export → Cassette audio (.wav)** or **Tape image (.tzx)**, or try it with **Run in Emulator**.
+
+The tabs:
 
 - **Overview**
   - *Auto-run detector:* whether the program starts by itself after LOAD and at which line (from `NXTLIN`).
@@ -430,6 +454,7 @@ Output goes to `build/`: all five executables.
 - converts ZX81 programs to ZX80 `.o` files and back, and a hand-made ZX80 file to ZX81 BASIC;
 - injects binaries of other sizes into `REM` lines and checks the system variables, and that putting the original back gives an identical file; checks the hidden-number positions match the listing;
 - reads quiet `.wav` recordings with a loud click, which fail with the standard settings, with a lower noise threshold (`AudioOptions`, `zx81dc --wav-threshold`);
+- BASIC only output (`tests/cs/BasicOnlyTest.cs`): a plain listing gives the same bytes as tokenising it directly; labels, `LET` and `THEN GOTO` put right (not inside strings); `DIM A(N)` and 3-D arrays allowed; every error; 1K and 2K checks with a collapsed screen. Every test listing built with `zx81c --basic-only` must match, and `tests/b1.bas` is built for 16K and 1K and run by the ROM's own BASIC (`tests/expected/b1.txt`);
 - labels (`tests/cs/LabelTest.cs`): a labelled listing compiles to exactly the same code as the numbered one; mixed numbering; every label error with its text line; renumbering (the renumbered program compiles to identical code; calculated GOTOs are warned about);
 - control files (`tests/cs/CtlTest.cs`): parsing every address form, `LABEL` and `COMMENT` in the `.asm`, `CODE` tracing and range decoding, `DATA` stopping tracing, and the `.asm` reassembling to the same bytes; then `zx81dc` with `program.ctl` and with `--ctl`;
 - the .P Toolkit's editors (`tests/cs/EditTest.cs`): drawn screen characters land at `D_FILE+1+row*33+col` with no system variable moving; a written-back tile changes only its 8 bytes; a new `REM` line of tiles moves `D_FILE`, `VARS`, `E_LINE`, `STKBOT` and `STKEND` by exactly its size, keeps `DF_CC`, the display file, the variables and the auto-run line, and errors are refused (collapsed display, keyword codes, an existing line number).
@@ -449,7 +474,7 @@ The harness doesn't emulate the display hardware or real tape and printer signal
 ## Project layout
 
 ```
-src/Core/        shared code: compiler, labels and renumbering, .p file reader, listing,
+src/Core/        shared code: compiler, BASIC only output, labels and renumbering, .p file reader, listing,
                  Z80 disassembler, machine code finder, control files, BASIC recovery,
                  tape writing and reading (.wav/.tzx/.p81), ZX80 conversion, emulator
                  settings, .p edits made by the Toolkit

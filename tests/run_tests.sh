@@ -37,6 +37,21 @@ echo "t7 with --strict-int: $n floating-point lines refused"
 echo "-- labels (@label:), mixed numbering, label errors, renumbering"
 mcs -langversion:5 -nowarn:414,219,168 -out:/tmp/labeltest.exe src/Core/*.cs tests/cs/LabelTest.cs
 mono /tmp/labeltest.exe | grep -v "^ok    "
+echo "-- BASIC only output (not compiled): labels, LET / THEN GOTO put right, ZX81 rules, 1K / 2K"
+mcs -langversion:5 -nowarn:414,219,168 -out:/tmp/basiconlytest.exe src/Core/*.cs tests/cs/BasicOnlyTest.cs
+mono /tmp/basiconlytest.exe tests/t1.bas | grep -v "^ok    "
+# zx81c --basic-only makes the same bytes as tokenising the listing directly, for every test listing
+mcs -langversion:5 -nowarn:414,219,168 -out:/tmp/tooltest.exe src/Core/*.cs tests/cs/ToolTest.cs
+n=0; bad=""
+for f in t1 t2 t3 t4 t5 t6 t7 t8 t9 t10 f1 f2 f3 f4 f5 f6; do
+  mono build/zx81c.exe --basic-only --no-autorun tests/$f.bas /tmp/zx81bo_$f.p > /dev/null
+  mono /tmp/tooltest.exe --mkp tests/$f.bas /tmp/zx81mkp_$f.p
+  if cmp -s /tmp/zx81bo_$f.p /tmp/zx81mkp_$f.p; then n=$((n+1)); else bad="$bad $f"; fi
+done
+echo "zx81c --basic-only = the listing tokenised directly: $n of 16 identical${bad:+ - DIFFERENT:$bad}"
+# t11 (arrays for a 32K pack) is too big for ordinary BASIC, which only uses 16K
+code=0; mono build/zx81c.exe --basic-only tests/t11.bas /tmp/zx81bo_t11.p > /tmp/zx81bo.out || code=$?
+[ $code = 1 ] && grep -q "doesn't fit a ZX81 with 16K" /tmp/zx81bo.out && echo "t11 refused as too big for BASIC: ok" || echo "t11 too big: FAIL"
 echo "-- --run starts the emulator set up in the INI file (a stand-in script here)"
 printf '#!/bin/sh\necho "$@" > /tmp/zx81emu.out\n' > /tmp/zx81emu.sh; chmod +x /tmp/zx81emu.sh; rm -f /tmp/zx81emu.out
 printf '[Emulator]\nPath=/tmp/zx81emu.sh\nArguments=-q "{file}"\n' > /tmp/zx81test.ini
@@ -98,6 +113,11 @@ if [ -n "$ROM" ]; then
     mono /tmp/tooltest.exe --mkp tests/$f.bas /tmp/zx81basic_$f.p
     python3 tests/cmpbasic.py tests/full_$f.p /tmp/zx81basic_$f.p --frames 3000
   done
+  echo "-- BASIC only output run by the ROM's own BASIC (16K, and 1K with a collapsed screen)"
+  mono build/zx81c.exe tests/b1.bas /tmp/zx81b1.p > /dev/null
+  mono build/zx81c.exe --ram 1 tests/b1.bas /tmp/zx81b1k.p > /dev/null
+  echo "b1 (16K): $(python3 tests/run81.py /tmp/zx81b1.p --basic --frames 2000 --expect tests/expected/b1.txt | tail -1)"
+  echo "b1 (1K):  $(python3 tests/run81.py /tmp/zx81b1k.p --basic --frames 2000 --ramtop 0x4400 --expect tests/expected/b1.txt | tail -1)"
   echo "f6 (INPUT 2.5, 4, -1.2): $(python3 tests/run81.py tests/f6.p --frames 600 --keys "20:2,30:.,40:5,50:NL,70:4,80:NL,200:MINUS,220:1,240:.,260:2,280:NL" --expect tests/expected/f6.txt | tail -1)"
 fi
 echo "== decompiler"
