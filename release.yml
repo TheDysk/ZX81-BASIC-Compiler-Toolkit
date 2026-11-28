@@ -1,0 +1,85 @@
+# Builds, tests and publishes the ZX81 BASIC Toolset when a version tag is pushed:
+#     git tag v1.01 && git push origin v1.01
+#
+#   test           Linux: builds with Mono (build.sh) and runs tests/run_tests.sh. The
+#                  ZX81 ROM isn't in the repository (it is copyright), so the tests
+#                  that need it are skipped; everything else must pass.
+#   build-windows  Windows: builds the five programs with the C# compiler that comes
+#                  with .NET Framework 4 (build.bat), the same way users build them.
+#   release        packages ZX81-Toolkit-win.zip (the five .exe files, README.md,
+#                  LICENSE and examples/) and publishes it as a GitHub Release.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write          # needed to create the release
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Mono and the Z80 emulator used by the tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mono-devel zip
+          python3 -m pip install --break-system-packages z80
+      - name: Build and run the tests
+        run: |
+          chmod +x build.sh tests/run_tests.sh
+          tests/run_tests.sh 2>&1 | tee test-output.txt
+          # run_tests.sh reports problems in its output rather than stopping
+          if grep -E "FAIL|DIFFERENT|NOT VERIFIED|Unhandled|DISPLAY FILE CORRUPTED|ROM CORRUPTED" test-output.txt; then
+            echo "::error::Some tests failed (see above)"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: test-output.txt
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with the .NET Framework 4 C# compiler
+        shell: cmd
+        run: build.bat
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exes
+          path: |
+            build/zx81c.exe
+            build/zx81dc.exe
+            build/ZX81BasicCompiler.exe
+            build/ZX81Decompiler.exe
+            build/ZX81PToolkit.exe
+
+  release:
+    needs: [test, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-exes
+          path: exes
+      - name: Package ZX81-Toolkit-win.zip
+        run: |
+          mkdir -p dist/ZX81-Toolkit
+          cp exes/*.exe dist/ZX81-Toolkit/
+          cp README.md LICENSE dist/ZX81-Toolkit/
+          cp -r examples dist/ZX81-Toolkit/
+          (cd dist && zip -r ../ZX81-Toolkit-win.zip ZX81-Toolkit)
+          unzip -l ZX81-Toolkit-win.zip
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" ZX81-Toolkit-win.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "ZX81 BASIC Toolset $GITHUB_REF_NAME" \
+            --generate-notes

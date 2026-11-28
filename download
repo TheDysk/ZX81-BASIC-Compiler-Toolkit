@@ -1,0 +1,6 @@
+build/
+*.p
+*.asm
+!examples/*.p
+__pycache__/
+tests/zx81.rom

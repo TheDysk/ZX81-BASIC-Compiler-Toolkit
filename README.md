@@ -442,7 +442,7 @@ python3 tests/run81.py tests/t11.p --hw16   # a 32K program on a plain 16K ZX81:
 python3 tests/run81.py tests/t2.p      # show the screen of a test program
 ```
 
-The floating-point, `VAL`, printer and tape tests need the real **ZX81 ROM**, which isn't included in this repository because it is copyright. Copy the 8K `zx81.rom` (for example from the EightyOne emulator) to `tests/zx81.rom`, or set `ZX81_ROM=path`. Without it, `run_tests.sh` still compiles and decompiles those programs but doesn't run them. Whole-number programs also run on a small built-in stub ROM (`--stub`).
+The floating-point, `VAL`, printer and tape tests need the real **ZX81 ROM**, which isn't included in this repository because it is copyright. Copy an 8K `zx81.rom` image that you are entitled to use to `tests/zx81.rom`, or set `ZX81_ROM=path`. Without it, `run_tests.sh` still compiles and decompiles those programs but doesn't run them. Whole-number programs also run on a small built-in stub ROM (`--stub`).
 
 The harness doesn't emulate the display hardware or real tape and printer signals. It catches the ROM's printer, SAVE, LOAD and NEW entry points and reports them instead. Loading a `.p` file, and the printer and tape on real hardware, should also be checked in a real emulator such as EightyOne.
 
@@ -464,6 +464,22 @@ build.bat        build on Windows
 .github/workflows/release.yml   builds, tests and publishes a release for a v* tag
 LICENSE          MIT licence
 ```
+
+## Acknowledgements and trademarks
+
+All of the code in this repository was written for this project. It contains no part of the ZX81 ROM and no code taken from other programs. The programs call ROM routines at their documented entry addresses (for example STACK-BC at 1520h) on the user's own ZX81 or emulator, as any ZX81 machine code program does.
+
+The project relies on published facts and descriptions:
+
+- the ZX81's character set, BASIC tokens, system variables, `.p` file layout and tape signal, needed so that programs work on a real ZX81;
+- the conventional names of ROM routines and calculator operations from the published ZX81 ROM disassemblies, used only as labels and comments in the decompiler's output;
+- the TZX tape file format (a public specification) and the `.p81` format;
+- the 16-bit xorshift random number method described by George Marsaglia ("Xorshift RNGs", 2003), used for `RND` in the integer modes;
+- the ZX81's own `RND` formula (a Lehmer generator, 75 × (seed + 1) mod 65537 − 1), worked out here with our own integer code so that `RAND n` gives the same numbers as a real ZX81.
+
+The test harness uses the [z80](https://pypi.org/project/z80/) Python package (MIT licence), which you install yourself; it is not included. EightyOne is mentioned only as an example of an emulator you can use; it is not included.
+
+ZX81, ZX80 and Sinclair are trademarks of their respective owners. This project is independent: it is not affiliated with, endorsed by or sponsored by Sinclair Research, Amstrad, Sky or any other owner of these names. The names are used only to say which computer the tools work with.
 
 ## Author
 
